@@ -502,3 +502,23 @@ dialog::backdrop {background: #111a3a70}
 .connection-advanced > label {margin-top:10px}
 .connection-advanced summary {cursor:pointer; color:var(--muted)}
 .setup-back .ui-icon {transform:rotate(180deg)}
+
+.select-control {position:relative; display:inline-grid; min-width:0; max-width:100%}
+.select-control select.sr {min-height:0; width:1px; height:1px; padding:0; margin:0; border:0}
+.select-trigger {display:flex; flex-direction:row-reverse; justify-content:space-between; align-items:center; gap:10px; width:100%; min-width:0; min-height:38px; padding:7px 11px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--ink); font:inherit; font-size:13px; cursor:pointer}
+.select-trigger span {overflow:hidden; white-space:nowrap; text-overflow:ellipsis}
+.select-trigger .ui-icon {width:15px; height:15px; color:var(--subtle)}
+.select-trigger:hover:not(:disabled), .select-trigger[aria-expanded="true"] {border-color:#b6c0dc; background:#f9faff}
+.select-trigger[aria-expanded="true"] .ui-icon {transform:rotate(180deg)}
+.select-trigger[aria-invalid="true"] {border-color:#ad2c49}
+.select-trigger:disabled {cursor:default; color:var(--subtle); background:var(--canvas)}
+.select-menu {position:absolute; top:calc(100% + 5px); inset-inline-start:0; z-index:20; min-width:100%; max-width:calc(100vw - 16px); max-height:290px; overflow:auto; overscroll-behavior:contain; margin:0; padding:4px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--ink); box-shadow:0 8px 24px #17234520; outline:none}
+.select-menu[popover] {position:fixed; inset:auto; min-width:0}
+.select-option {display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:34px; padding:5px 8px; border-radius:6px; cursor:pointer; font-size:13px; font-weight:500}
+.select-option span {overflow-wrap:anywhere}
+.select-option[aria-selected="true"] {color:var(--accent-dark); font-weight:650}
+.select-option.is-active {background:var(--accent-soft)}
+.select-option .ui-icon {width:15px; height:15px; visibility:hidden}
+.select-option[aria-selected="true"] .ui-icon {visibility:visible}
+.studio-toolbar .select-control {max-width:min(100%, 310px)}
+.studio-toolbar .select-trigger, .model-library .filters .select-trigger {min-height:33px; padding-block:4px}

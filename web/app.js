@@ -329,6 +329,7 @@ function openAgentTraces(agent) {
   updateTraceProjects();
   byId('project').value = agent.identifier;
   for (const id of ['search', 'status', 'environment']) byId(id).value = '';
+  for (const id of ['project', 'status', 'environment']) syncSelect(byId(id));
   document.querySelector('.nav[data-view="traces"]').click();
 }
 
