@@ -494,3 +494,10 @@ dialog::backdrop {background: #111a3a70}
 
 .sign-in-card .auth-actions {justify-content:space-between}
 .auth-actions a.button {text-decoration:none}
+
+.agent-model-setup {display:grid; gap:10px; padding:14px 0}
+.agent-model-setup .provider-grid {grid-template-columns:repeat(auto-fit,minmax(min(100%, 170px),1fr))}
+.connection-advanced {display:grid; gap:10px}
+.connection-advanced > label {margin-top:10px}
+.connection-advanced summary {cursor:pointer; color:var(--muted)}
+.setup-back .ui-icon {transform:rotate(180deg)}

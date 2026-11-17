@@ -356,7 +356,7 @@ function brandMark() {
   return mark;
 }
 
-async function openCreateAgent() {
+function openCreateAgent({preferredModel, draft = {}} = {}) {
   const body = element('div', undefined, 'agent-mode');
   const buttons = element('div', undefined, 'agent-mode');
   const studio = iconButton('studio', 'Build in Studio', 'button');
@@ -365,25 +365,48 @@ async function openCreateAgent() {
   const studioBody = element('div');
   const externalBody = element('div');
   const models = studioModels();
+  function connectProvider(vendor, back, currentDraft = draft) {
+    showModelEditor(null, vendor, {
+      back,
+      saved(model) {
+        records = [...records, model];
+        openCreateAgent({preferredModel:model.id, draft:currentDraft});
+      }
+    });
+  }
   if (models.length) {
+    const name = field('name', 'Agent name', 'text', draft.name ?? '');
+    const instructions = field('instructions', 'Agent instructions', 'textarea', draft.instructions ?? '');
+    instructions.querySelector('textarea').placeholder = 'Describe what the agent should do and how it should respond.';
+    const model = field('provider', 'Model', models);
+    const modelInput = model.querySelector('select');
+    modelInput.value = preferredModel ?? models[0][0];
     const form = formPanel('Agent configuration', [
-      field('name', 'Name'),
-      field('provider', 'Model', models),
-      field('instructions', 'Agent instructions', 'textarea')
-    ], 'Create agent', async data => {
+      name, model, instructions
+    ], 'Create and open Studio', async data => {
       const agent = await platformRequest('/agents', {...data, source:'studio'});
       byId('modal').close();
       await loadModule('studio', agent.id);
     });
-    if (models.length === 1) form.querySelector('select').value = models[0][0];
-    studioBody.append(form);
-  } else {
-    const connect = iconButton('models', 'Connect a model', 'button primary module-result');
-    connect.addEventListener('click', () => {
-      byId('modal').close();
-      loadModule('models');
+    const add = iconButton('plus', 'Connect another model', 'button quiet');
+    add.addEventListener('click', () => {
+      const nextDraft = {name:name.querySelector('input').value, instructions:instructions.querySelector('textarea').value};
+      const previousModel = modelInput.value;
+      const returnToAgent = () => openCreateAgent({preferredModel:previousModel, draft:nextDraft});
+      function choose() {
+        const back = iconButton('arrow', 'Back to agent', 'button quiet setup-back');
+        back.addEventListener('click', returnToAgent);
+        openModal('Choose a model provider', [providerCards(vendor => connectProvider(vendor, choose, nextDraft)), back]);
+      }
+      choose();
     });
-    studioBody.append(element('p', 'Connect a model before building a Studio agent.'), connect);
+    studioBody.append(form, add);
+  } else {
+    const setup = element('section', undefined, 'agent-model-setup');
+    setup.append(element('h3', 'Choose a model for your agent'),
+      element('p', 'Connect a provider with your API key. Then you can name your agent, add instructions and run it in Studio.'),
+      providerCards(vendor => connectProvider(vendor, () => openCreateAgent({draft}))));
+    studioBody.append(setup);
   }
   externalBody.append(formPanel('External agent', [field('name', 'Name')], 'Register agent', async data => {
     await platformRequest('/agents', {...data, source:'external'});
@@ -445,7 +468,7 @@ function studioWorkspace(targets, selectedTarget) {
     const create = iconButton('plus', 'New agent', 'button primary');
     create.addEventListener('click', openCreateAgent);
     panel.append(brandMark(), element('h2', 'Create an agent to start a run'),
-      element('p', 'Connect a model, give the agent instructions, and test it here.'), create);
+      element('p', 'Choose a model, give the agent instructions, and test it here.'), create);
     return panel;
   }
   const panel = element('section', undefined, 'panel studio-workspace wide');
@@ -802,7 +825,7 @@ byId('connect').addEventListener('click', async () => {
   button.disabled = true;
   try {
     records = await platformRequest();
-    await openCreateAgent();
+    openCreateAgent();
   } catch (error) {
     openModal('New agent', [element('p', error.message)]);
   } finally {

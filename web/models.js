@@ -27,7 +27,7 @@ function modelStatus(model) {
   return element('span', 'Untested', 'pill');
 }
 
-function providerCards() {
+function providerCards(onSelect = vendor => showModelEditor(null, vendor)) {
   const grid = element('div', undefined, 'provider-grid');
   for (const [vendor, provider] of Object.entries(modelProviders)) {
     const card = element('button', undefined, 'provider-card');
@@ -39,7 +39,7 @@ function providerCards() {
     const action = element('span', 'Connect', 'provider-action');
     action.append(icon('arrow'));
     card.append(identity, action);
-    card.addEventListener('click', () => showModelEditor(null, vendor));
+    card.addEventListener('click', () => onSelect(vendor));
     grid.append(card);
   }
   return grid;
@@ -58,7 +58,7 @@ async function refreshModels() {
   renderModule('models');
 }
 
-function showModelEditor(existing, vendor) {
+function showModelEditor(existing, vendor, continuation) {
   const selection = existing?.vendor ?? vendor ?? 'custom';
   const preset = modelProviders[selection] ?? modelProviders.custom;
   const provider = field('vendor', 'Provider', Object.entries(modelProviders).map(([id, item]) => [id, item.name]));
@@ -88,14 +88,30 @@ function showModelEditor(existing, vendor) {
     previous = next;
   });
 
+  let fields = [provider, name, model, url, key];
+  if (continuation && selection !== 'custom') {
+    const settings = element('details', undefined, 'connection-advanced');
+    settings.append(element('summary', 'Connection settings'), name, model, url);
+    fields = [key, settings];
+  }
   const form = formPanel(existing ? 'Connection settings' : preset.name,
-    [provider, name, model, url, key], existing ? 'Save changes' : 'Add connection', async data => {
+    fields, continuation ? 'Save and continue' : existing ? 'Save changes' : 'Add connection', async data => {
       const saved = await platformRequest(existing ? '/models-update' : '/models',
-        existing ? {...data, provider:existing.id} : data);
+        existing ? {...data, provider:existing.id} : {...data, vendor:data.vendor ?? selection});
+      if (continuation) {
+        if (byId('modal').open) continuation.saved(saved);
+        return;
+      }
       await refreshModels();
       if (byId('modal').open) showModelDetail(saved);
     });
-  openModal(existing ? 'Edit connection' : 'Add connection', [form]);
+  if (!continuation) {
+    openModal(existing ? 'Edit connection' : 'Add connection', [form]);
+    return;
+  }
+  const back = iconButton('arrow', 'Back to providers', 'button quiet setup-back');
+  back.addEventListener('click', continuation.back);
+  openModal('Connect a model for your agent', [form, back]);
 }
 
 function showModelDetail(model, test = false) {
