@@ -27,17 +27,25 @@ function accountForm(purpose, inline = false) {
   const channels = [];
   if (login || accountStatus.email_configured) channels.push(['email', '邮箱']);
   if (login || accountStatus.sms_configured) channels.push(['phone', '手机号']);
-  const method = field('method', '登录方式', channels);
-  const methodInput = method.querySelector('select');
-  const methodControl = element('span', undefined, 'auth-select');
-  methodControl.append(methodInput, icon('chevron-down'));
-  method.append(methodControl);
-  methodInput.value = channels[0][0];
+  const method = element('fieldset', undefined, 'auth-method');
+  const methods = element('div', undefined, 'auth-method-options');
+  method.append(element('legend', login ? '登录方式' : '验证方式'), methods);
   method.hidden = channels.length === 1;
+  for (const [value, name] of channels) {
+    const option = element('label');
+    const radio = element('input', undefined, 'sr');
+    radio.type = 'radio';
+    radio.name = 'method';
+    radio.value = value;
+    radio.checked = value === channels[0][0];
+    option.append(radio, element('span', name));
+    methods.append(option);
+  }
+  const selectedMethod = () => method.querySelector('input:checked').value;
   const address = field('address', '邮箱地址', 'email');
   const addressInput = address.querySelector('input');
   const setAddressType = () => {
-    const email = methodInput.value === 'email';
+    const email = selectedMethod() === 'email';
     address.firstChild.textContent = email ? '邮箱地址' : '中国大陆手机号';
     addressInput.type = email ? 'email' : 'tel';
     addressInput.autocomplete = email ? 'email' : 'tel-national';
@@ -66,10 +74,11 @@ function accountForm(purpose, inline = false) {
   let requestedMethod;
   let countdown;
   const matchesRequest = () => addressInput.value.trim() === requestedAddress &&
-    methodInput.value === requestedMethod;
+    selectedMethod() === requestedMethod;
   addressInput.addEventListener('input', () => { if (!login) submit.disabled = !matchesRequest(); });
-  methodInput.addEventListener('change', () => {
+  method.addEventListener('change', () => {
     setAddressType();
+    challenge = undefined;
     addressInput.value = '';
     codeInput.value = '';
     message.textContent = '';
@@ -82,13 +91,13 @@ function accountForm(purpose, inline = false) {
   send.addEventListener('click', async () => {
     if (!addressInput.reportValidity()) return;
     send.disabled = true;
-    methodInput.disabled = true;
+    method.disabled = true;
     submit.disabled = true;
     challenge = undefined;
     codeInput.value = '';
     message.textContent = '';
     const entered = addressInput.value.trim();
-    const channel = methodInput.value;
+    const channel = selectedMethod();
     try {
       const result = await authRequest('send', {[channel]:entered, purpose});
       challenge = result.challenge;
@@ -115,17 +124,19 @@ function accountForm(purpose, inline = false) {
       message.textContent = error.message;
       send.disabled = false;
     } finally {
-      methodInput.disabled = false;
+      method.disabled = false;
     }
   });
 
   form.addEventListener('submit', async event => {
     event.preventDefault();
-    if (!login && (!challenge || !matchesRequest())) return;
+    if (submit.disabled || (!login && (!challenge || !matchesRequest()))) return;
     submit.disabled = true;
+    method.disabled = true;
+    message.textContent = '';
     try {
       if (login) {
-        await authRequest('login', {[methodInput.value]:addressInput.value.trim(), password:passwordInput.value});
+        await authRequest('login', {[selectedMethod()]:addressInput.value.trim(), password:passwordInput.value});
       } else {
         const passwordField = purpose === 'reset' ? 'reset_password' : 'password';
         await authRequest('verify', {[requestedMethod]:requestedAddress, challenge, code:codeInput.value.trim(),
@@ -137,6 +148,8 @@ function accountForm(purpose, inline = false) {
     } catch (error) {
       message.textContent = error.message;
       submit.disabled = false;
+    } finally {
+      method.disabled = false;
     }
   });
   const row = element('div', undefined, 'auth-send-row');
