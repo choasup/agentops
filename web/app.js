@@ -119,6 +119,7 @@ function showTrace(trace, linked = false) {
         ['Started', run.at ? new Date(run.at).toLocaleString() : '—'],
         ['ID', run.id ?? '—']
       ];
+      if (run.model) items.splice(1, 0, ['Model', run.model]);
       for (const [key, value] of items) details.append(element('dt', key), element('dd', value));
       content.replaceChildren(details);
     } else {

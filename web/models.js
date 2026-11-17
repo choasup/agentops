@@ -1,6 +1,6 @@
 const modelProviders = {
-  deepseek: {name:'DeepSeek', mark:'DS', url:'https://api.deepseek.com/chat/completions', model:'deepseek-v4-flash'},
-  bailian: {name:'Alibaba Cloud Bailian', mark:'Q', url:'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model:'qwen-plus'},
+  deepseek: {name:'DeepSeek', icon:'providers/deepseek.svg', url:'https://api.deepseek.com/chat/completions', model:'deepseek-v4-flash'},
+  bailian: {name:'Alibaba Cloud Bailian', icon:'providers/bailian.svg', url:'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model:'qwen-plus'},
   custom: {name:'OpenAI-compatible', mark:'<>', url:'', model:''}
 };
 const modelFilters = {query:'', provider:''};
@@ -9,6 +9,12 @@ function providerMark(vendor) {
   const provider = modelProviders[vendor] ?? modelProviders.custom;
   const mark = element('span', provider.mark, 'provider-mark ' + vendor);
   mark.setAttribute('aria-hidden', 'true');
+  if (provider.icon) {
+    const image = element('img');
+    image.src = provider.icon;
+    image.alt = '';
+    mark.append(image);
+  }
   return mark;
 }
 

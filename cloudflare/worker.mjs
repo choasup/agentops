@@ -407,14 +407,16 @@ export class Workspace extends DurableObject {
       if (target.source === 'external') throw new InputError('External agents run in your application');
       const prompt = records.find(item => item.id === target.prompt);
       const provider = records.find(item => item.kind === 'model' && item.id === target.provider);
-      const model = target.instructions || this.env.TRACE_STUDIO_MODEL;
+      const model = provider?.model ?? this.env.TRACE_STUDIO_MODEL;
       const step = {name:model ? 'generate' : 'render_prompt', type:model ? 'llm' : 'template', input:data.input};
+      if (model) step.model = model;
       const start = performance.now();
       let tokens = 0;
       try {
         const result = await this.execute(prompt, data.input, target.instructions, provider);
         step.output = result.output;
         tokens = result.tokens;
+        if (model) step.tokens = tokens;
       } catch (error) {
         if (!(error instanceof InputError)) throw error;
         step.error = error.message;

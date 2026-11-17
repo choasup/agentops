@@ -228,10 +228,15 @@ class Handler(SimpleHTTPRequestHandler):
                              and item['id'] == target.get('provider')), None)
             prompt = next((item for item in records if item['id'] == target.get('prompt')), None)
             start = time.perf_counter()
-            step = {'name': 'generate', 'type': 'llm', 'input': data.get('input')} if instructions is not None or os.environ.get('TRACE_STUDIO_MODEL') else {'name': 'render_prompt', 'type': 'template', 'input': data.get('input')}
+            model = provider['model'] if provider else os.environ.get('TRACE_STUDIO_MODEL')
+            step = {'name': 'generate', 'type': 'llm', 'input': data.get('input')} if model else {'name': 'render_prompt', 'type': 'template', 'input': data.get('input')}
+            if model:
+                step['model'] = model
             tokens = 0
             try:
                 step['output'], tokens = execute(prompt, step['input'], instructions, provider)
+                if model:
+                    step['tokens'] = tokens
                 status = 'success'
             except ValueError as error:
                 step['error'] = str(error)

@@ -421,7 +421,8 @@ dialog::backdrop {background: #111a3a70}
 .model-row-identity p {max-width:28ch; font-size:11px; overflow:hidden; text-overflow:ellipsis}
 .provider-mark {display:grid; place-items:center; flex:none; width:33px; height:33px; border-radius:8px; color:#364188; background:#edf0ff; font-size:12px; font-weight:750; letter-spacing:-.025em}
 .provider-mark.deepseek {color:#2748cb; background:#eaf0ff}
-.provider-mark.bailian {color:#994411; background:#fff0e5}
+.provider-mark.bailian {background:#f1f4ff}
+.provider-mark img {display:block; width:23px; height:23px; object-fit:contain}
 .provider-mark.custom {color:#3f4b60; background:#edf0f5; font-family:ui-monospace,monospace}
 .model-catalogue h2 {margin-bottom:10px; font-size:14px}
 .provider-grid {display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px}
