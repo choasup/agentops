@@ -26,6 +26,8 @@ const demo = Array.from({length: 14}, (_, day) => {
 
 let traces = demo;
 let view = 'overview';
+let scopedAgent;
+let tracesReady = false;
 const money = amount => '$' + amount.toFixed(4);
 const latency = duration => (duration / 1000).toFixed(2) + ' s';
 
@@ -49,42 +51,132 @@ function payload(label, data) {
   return block;
 }
 
-function showTrace(trace) {
+function runStatus(run) {
+  if (run.status === 'error' || run.error != null) return 'error';
+  return run.status === 'success' || run.output != null ? 'success' : '';
+}
+
+function statusPill(status) {
+  return element('span', status === 'error' ? 'Error' : status === 'success' ? 'Success' : 'Recorded',
+    'pill ' + status);
+}
+
+function showTrace(trace, linked = false) {
+  const inspector = byId('trace-inspector');
   const metadata = element('div', undefined, 'trace-meta');
-  metadata.append(
-    element('span', trace.status === 'success' ? 'Success' : 'Error', 'pill ' + trace.status),
-    element('span', latency(trace.duration), 'pill'),
-    element('span', number.format(trace.tokens) + ' tokens', 'pill')
-  );
+  metadata.append(statusPill(runStatus(trace)), element('span', latency(trace.duration), 'pill'),
+    element('span', number.format(trace.tokens) + ' tokens', 'pill'));
   if (trace.environment) metadata.append(element('span', trace.environment, 'pill'));
 
-  const steps = element('section', undefined, 'modal-section');
-  steps.append(element('h2', 'Execution steps'));
-  const tree = element('div', undefined, 'run-tree');
-  function addSteps(container, runs) {
-    for (const run of runs) {
-      const item = element('details');
-      const duration = typeof run.duration === 'number' ? latency(run.duration) : '';
-      item.append(element('summary', [run.name, run.type, duration].filter(Boolean).join(' · ')));
-      for (const key of ['input', 'output', 'error']) {
-        if (key in run) item.append(payload(key.charAt(0).toUpperCase() + key.slice(1), run[key]));
-      }
-      if (Array.isArray(run.steps)) addSteps(item, run.steps.filter(step => step && typeof step.name === 'string'));
-      container.append(item);
+  const summary = element('div', undefined, 'inspector-summary');
+  const identity = element('div');
+  identity.append(metadata, element('p', traceScope(trace) + ' · ' + trace.id, 'trace-id'));
+  const link = element('button', 'Copy link', 'button');
+  const shareUrl = new URL('/', location.origin);
+  shareUrl.searchParams.set('trace', trace.id);
+  link.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl.href);
+      link.textContent = 'Copied';
+    } catch {
+      const field = element('input');
+      field.readOnly = true;
+      field.value = shareUrl.href;
+      field.setAttribute('aria-label', 'Trace link');
+      link.replaceWith(field);
+      field.select();
+    }
+  });
+  summary.append(identity, link);
+
+  const split = element('div', undefined, 'inspector-split');
+  const tree = element('nav', undefined, 'step-tree');
+  tree.setAttribute('aria-label', 'Trace runs');
+  const treeHead = element('h3', 'Execution tree', 'inspector-label');
+  const list = element('div');
+  tree.append(treeHead, list);
+  const detail = element('section', undefined, 'step-detail');
+  const stepTitle = element('h3');
+  const tabs = element('div', undefined, 'trace-tabs');
+  const content = element('div', undefined, 'step-content');
+  detail.append(stepTitle, tabs, content);
+  split.append(tree, detail);
+
+  let selectedButton;
+  let selectedRun;
+  let selectedTab;
+  const tabButtons = new Map();
+  function display(tab) {
+    selectedTab = tab;
+    for (const [name, button] of tabButtons) button.setAttribute('aria-pressed', String(name === tab));
+    const run = selectedRun;
+    if (tab === 'Details') {
+      const details = element('dl', undefined, 'run-facts');
+      const items = [
+        ['Type', run.type ?? (run === trace ? 'trace' : 'run')],
+        ['Duration', typeof run.duration === 'number' ? latency(run.duration) : '—'],
+        ['Tokens', typeof run.tokens === 'number' ? number.format(run.tokens) : '—'],
+        ['Started', run.at ? new Date(run.at).toLocaleString() : '—'],
+        ['ID', run.id ?? '—']
+      ];
+      for (const [key, value] of items) details.append(element('dt', key), element('dd', value));
+      content.replaceChildren(details);
+    } else {
+      const value = tab === 'Error' ? run.error : run[tab.toLowerCase()];
+      content.replaceChildren(value === undefined
+        ? element('p', 'No ' + tab.toLowerCase() + ' recorded.')
+        : element('pre', typeof value === 'string' ? value : JSON.stringify(value, null, 2)));
     }
   }
-  addSteps(tree, trace.steps);
-  if (trace.steps.length) steps.append(tree);
-  else steps.append(element('p', 'No execution steps recorded.'));
 
-  const children = [metadata, element('p', traceScope(trace) + ' · ' + trace.id, 'trace-id')];
-  if (trace.error != null) children.push(payload('Error', trace.error));
-  else if (trace.output != null) children.push(payload('Output', trace.output));
-  children.push(payload('Input', trace.input), steps);
+  function select(run, button) {
+    selectedButton?.removeAttribute('aria-current');
+    button.setAttribute('aria-current', 'true');
+    selectedButton = button;
+    selectedRun = run;
+    stepTitle.textContent = run === trace ? 'Trace overview' : run.name;
+    const available = ['Input', 'Output', ...(run.error != null ? ['Error'] : []), 'Details'];
+    tabButtons.clear();
+    tabs.replaceChildren(...available.map(tab => {
+      const toggle = element('button', tab, 'trace-tab');
+      toggle.addEventListener('click', () => display(tab));
+      tabButtons.set(tab, toggle);
+      return toggle;
+    }));
+    display(run.error != null ? 'Error' : available.includes(selectedTab) && selectedTab !== 'Error'
+      ? selectedTab : run.output !== undefined ? 'Output' : 'Input');
+  }
+
+  function addRun(run, depth) {
+    const button = element('button', undefined, 'step-row');
+    button.style.setProperty('--depth', Math.min(depth, 8));
+    const name = element('span', run === trace ? 'Trace overview' : run.name, 'step-name');
+    const status = element('i', undefined, 'step-dot ' + runStatus(run));
+    status.setAttribute('aria-hidden', 'true');
+    const time = typeof run.duration === 'number' ? latency(run.duration) : '—';
+    button.append(status, name, element('span', time, 'step-time'));
+    button.addEventListener('click', () => select(run, button));
+    list.append(button);
+    if (run === trace) select(run, button);
+    if (Array.isArray(run.steps)) {
+      for (const step of run.steps) if (step && typeof step.name === 'string') addRun(step, depth + 1);
+    }
+  }
+
+  addRun(trace, 0);
   byId('trace-title').textContent = trace.name;
-  byId('trace-body').replaceChildren(...children);
-  if (!byId('trace-inspector').open) byId('trace-inspector').showModal();
+  byId('trace-body').replaceChildren(summary, split);
+  if (!inspector.open) inspector.showModal();
+  if (linked) inspector.dataset.fromLink = 'true';
 }
+
+byId('trace-inspector').addEventListener('close', event => {
+  if (!event.currentTarget.dataset.fromLink) return;
+  delete event.currentTarget.dataset.fromLink;
+  const url = new URL(location.href);
+  url.searchParams.delete('trace');
+  history.replaceState(null, '', url);
+});
 
 function closeWorkspaceMenu() {
   document.querySelector('.sidebar').classList.remove('menu-open');
@@ -124,6 +216,15 @@ function renderChart(scope) {
     column.append(stack, element('span', label));
     return column;
   }));
+}
+
+function updateTraceProjects() {
+  const projects = new Map(traces.map(trace => [traceScope(trace), traceScope(trace)]));
+  if (scopedAgent) projects.set(scopedAgent.identifier, scopedAgent.name);
+  const selected = byId('project').value;
+  byId('project').replaceChildren(new Option('All agents and projects', ''),
+    ...[...projects].sort((a, b) => a[1].localeCompare(b[1])).map(([value, label]) => new Option(label, value)));
+  byId('project').value = projects.has(selected) ? selected : '';
 }
 
 function render() {
@@ -188,12 +289,12 @@ async function refresh() {
     if (!response.ok) throw new Error('Trace API unavailable');
     const saved = await response.json();
     traces = saved.length ? saved : demo;
-    const project = byId('project').value;
-    const projects = [...new Set(traces.map(traceScope))].sort();
-    byId('project').replaceChildren(new Option('All agents and projects', ''), ...projects.map(name => new Option(name, name)));
-    byId('project').value = projects.includes(project) ? project : '';
+    tracesReady = true;
+    updateTraceProjects();
     byId('notice').textContent = '';
     render();
+    document.dispatchEvent(new Event('tracesupdated'));
+    return true;
   } catch {
     byId('notice').textContent = 'Could not refresh traces. The last available data is displayed.';
   }
@@ -201,6 +302,7 @@ async function refresh() {
 
 document.querySelectorAll('.nav[data-view]').forEach(button => button.addEventListener('click', () => {
   closeWorkspaceMenu();
+  activeModule = null;
   byId('platform-content').hidden = true;
   byId('tracing-content').hidden = false;
   view = button.dataset.view;
@@ -216,14 +318,30 @@ document.querySelectorAll('.nav[data-view]').forEach(button => button.addEventLi
   byId('description').textContent = overview ? 'Monitor performance and debug your agent runs.' : 'Search runs and inspect execution steps.';
   document.querySelector('.table-panel h2').textContent = overview ? 'Recent traces' : 'Trace explorer';
   render();
+  refresh();
 }));
+
+function openAgentTraces(agent) {
+  scopedAgent = agent;
+  updateTraceProjects();
+  byId('project').value = agent.identifier;
+  for (const id of ['search', 'status', 'environment']) byId(id).value = '';
+  document.querySelector('.nav[data-view="traces"]').click();
+}
 
 for (const id of ['project', 'environment', 'status', 'search']) byId(id).addEventListener('input', render);
 
 function startTraceMonitoring() {
   render();
-  refresh();
+  refresh().then(loaded => {
+    const id = new URL(location.href).searchParams.get('trace');
+    if (!id || !loaded) return;
+    document.querySelector('.nav[data-view="traces"]').click();
+    const trace = traces.find(item => item.id === id);
+    if (trace) showTrace(trace, true);
+    else byId('notice').textContent = 'This trace is unavailable in your workspace.';
+  });
   setInterval(() => {
-    if (!byId('tracing-content').hidden && !document.hidden) refresh();
+    if (!byId('tracing-content').hidden && !byId('trace-inspector').open && !document.hidden) refresh();
   }, 5000);
 }

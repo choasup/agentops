@@ -405,7 +405,7 @@ export class Workspace extends DurableObject {
         step.error = error.message;
       }
       step.duration = performance.now() - start;
-      const trace = {...step, name:target.name, project:kind + ':' + target.name,
+      const trace = {...step, name:target.name, target_id:target.id, project:kind + ':' + target.name,
         status:step.error ? 'error' : 'success', tokens, cost:0, steps:[step]};
       if (target.identifier) Object.assign(trace, {
         agent_id:target.identifier, environment:'local', project:'agent:' + target.identifier

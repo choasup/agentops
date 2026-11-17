@@ -14,6 +14,15 @@ const modules = {
 let activeModule;
 let records = [];
 let apiKeys = [];
+const registryFilters = {query:'', source:'', sort:'recent'};
+let lastStudioTarget;
+let refreshWorkspaceView;
+document.addEventListener('tracesupdated', () => refreshWorkspaceView?.());
+
+function timeLabel(value) {
+  if (!value) return '—';
+  return new Date(value).toLocaleString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
+}
 
 const providerPresets = {
   deepseek: {label:'DeepSeek', url:'https://api.deepseek.com/chat/completions', model:'deepseek-v4-flash'},
@@ -136,6 +145,7 @@ async function create(module, data) {
 }
 
 function renderModule(module, selectedTarget) {
+  refreshWorkspaceView = undefined;
   const [title, description] = modules[module];
   const heading = element('div', undefined, 'module-heading');
   const headingText = element('div');
@@ -318,60 +328,7 @@ function renderModule(module, selectedTarget) {
   if (module === 'studio') {
     const targets = records.filter(record =>
       record.kind === 'deployment' || (record.kind === 'agent' && record.source !== 'external'));
-    if (!targets.length) {
-      const panel = element('section', undefined, 'panel agent-empty wide');
-      const create = element('button', 'New agent', 'button primary');
-      create.addEventListener('click', openCreateAgent);
-      panel.append(brandMark(), element('h2', 'Create an agent to start a run'),
-        element('p', 'Connect a model, give the agent instructions, and test it here.'), create);
-      panels.push(panel);
-    } else {
-      const targetField = field('target', 'Agent or deployment', targets.map(record =>
-        [record.id, record.name + (record.kind === 'deployment' ? ' · Deployment' : '')]));
-      const targetInput = targetField.querySelector('select');
-      targetInput.value = selectedTarget ?? (targets.length === 1 ? targets[0].id : '');
-      const messageField = field('input', 'Message', 'textarea');
-      const message = messageField.querySelector('textarea');
-      const info = element('p');
-      function updateTarget() {
-        const target = targets.find(record => record.id === targetInput.value);
-        const chat = target?.instructions;
-        messageField.firstChild.textContent = chat || !target ? 'Message' : 'Input JSON';
-        message.placeholder = chat || !target ? 'Send a message to your agent…' : '{"input":"Hello"}';
-        info.textContent = target?.provider ? 'Model: ' + recordName(target.provider) : '';
-      }
-      targetInput.addEventListener('change', updateTarget);
-      updateTarget();
-
-      const result = element('section', undefined, 'panel module-panel studio-result');
-      result.setAttribute('aria-live', 'polite');
-      result.append(element('h2', 'Response'), element('p', 'Run an agent to see its reply and trace.'));
-      const inputPanel = formPanel('Run input', [targetField, info, messageField], 'Run in Studio', async data => {
-        const target = targets.find(record => record.id === data.target);
-        if (!target) throw new Error('Choose an agent or deployment.');
-        const input = target.instructions ? data.input : jsonInput(data.input);
-        result.replaceChildren(element('h2', 'Response'), element('p', 'Running…'));
-        let trace;
-        try {
-          trace = await platformRequest('/runs', {...data, target_kind:target.kind, input});
-        } catch (error) {
-          result.replaceChildren(element('h2', 'Response'), element('p', error.message, 'studio-response is-error'));
-          return;
-        }
-        const failed = trace.status !== 'success';
-        const output = failed ? trace.error ?? 'Run failed' : trace.output;
-        const meta = element('div', undefined, 'trace-meta');
-        meta.append(element('span', failed ? 'Error' : 'Success', 'pill ' + trace.status),
-          element('span', latency(trace.duration), 'pill'), element('span', number.format(trace.tokens) + ' tokens', 'pill'));
-        const inspect = element('button', 'View trace', 'button');
-        inspect.addEventListener('click', () => showTrace(trace));
-        result.replaceChildren(element('h2', 'Response'), meta,
-          element('div', typeof output === 'string' ? output : JSON.stringify(output ?? null, null, 2),
-            failed ? 'studio-response is-error' : 'studio-response'), inspect);
-        await refresh();
-      });
-      panels.push(inputPanel, result);
-    }
+    panels.push(studioWorkspace(targets, selectedTarget));
   }
 
   const grid = element('div', undefined, 'module-grid');
@@ -433,7 +390,7 @@ async function openCreateAgent() {
   openModal('New agent', [body]);
 }
 
-function agentSettings(agent) {
+function agentSettings(agent, returnTo = 'agents') {
   const controls = element('div', undefined, 'model-actions');
   const isExternal = agent.source === 'external';
   const currentModel = agent.provider ? recordName(agent.provider) : 'Workspace default';
@@ -461,11 +418,190 @@ function agentSettings(agent) {
     content.append(formPanel('Change model', [provider], 'Save model', async data => {
       await platformRequest('/agent-model', {...data, agent:agent.id});
       byId('modal').close();
-      await loadModule('agents');
+      await loadModule(returnTo, agent.id);
     }));
   }
   content.append(controls);
   openModal(agent.name, [content]);
+}
+
+function studioWorkspace(targets, selectedTarget) {
+  if (!targets.length) {
+    const panel = element('section', undefined, 'panel agent-empty wide');
+    const create = element('button', 'New agent', 'button primary');
+    create.addEventListener('click', openCreateAgent);
+    panel.append(brandMark(), element('h2', 'Create an agent to start a run'),
+      element('p', 'Connect a model, give the agent instructions, and test it here.'), create);
+    return panel;
+  }
+  const panel = element('section', undefined, 'panel studio-workspace wide');
+  const toolbar = element('header', undefined, 'studio-toolbar');
+  const selector = field('target', 'Agent or deployment', targets.map(target => [
+    target.id, target.name + (target.kind === 'deployment' ? ' · Deployment' : '')
+  ]));
+  const targetInput = selector.querySelector('select');
+  targetInput.value = selectedTarget ?? lastStudioTarget ?? targets[0].id;
+  if (!targetInput.value) targetInput.value = targets[0].id;
+  const model = element('span', undefined, 'studio-model');
+  const configure = element('button', 'Configuration', 'button');
+  toolbar.append(selector, model, configure);
+
+  const split = element('div', undefined, 'studio-split');
+  const history = element('aside', undefined, 'studio-history');
+  history.append(element('h2', 'Runs'));
+  const runList = element('div', undefined, 'studio-run-list');
+  history.append(runList);
+  const stage = element('div', undefined, 'studio-stage');
+  const session = element('div', undefined, 'studio-stream');
+  session.setAttribute('aria-live', 'polite');
+  const form = element('form', undefined, 'studio-composer');
+  const message = element('textarea');
+  message.rows = 2;
+  message.required = true;
+  const messageLabel = element('label', 'Message', 'sr');
+  message.id = 'studio-message';
+  messageLabel.htmlFor = message.id;
+  const send = element('button', 'Run', 'button primary');
+  const hint = element('p', 'Each run is independent.');
+  const formFooter = element('div', undefined, 'composer-footer');
+  formFooter.append(hint, send);
+  form.append(messageLabel, message, formFooter);
+  stage.append(session, form);
+  split.append(history, stage);
+  panel.append(toolbar, split);
+
+  let pending = false;
+  let selectedRun;
+  let lastError;
+  let requestTrace;
+  const current = () => targets.find(target => target.id === targetInput.value);
+  const selectTarget = (reset = true) => {
+    const target = current();
+    lastStudioTarget = target.id;
+    model.textContent = target.provider ? recordName(target.provider) : target.kind === 'deployment' ? 'Deployment' : 'Workspace default';
+    configure.hidden = target.kind === 'deployment';
+    if (reset) {
+      selectedRun = undefined;
+      requestTrace = undefined;
+      lastError = undefined;
+      message.value = '';
+    }
+    messageLabel.textContent = target.instructions ? 'Message' : 'Input JSON';
+    message.placeholder = target.instructions ? 'Send a test message…' : '{"input":"Hello"}';
+    draw();
+  };
+  targetInput.addEventListener('change', () => selectTarget());
+  configure.addEventListener('click', () => agentSettings(current(), 'studio'));
+
+  function recentRuns() {
+    const target = current();
+    const saved = traces === demo ? [] : traces.filter(trace => trace.target_id === target.id ||
+      (!trace.target_id && target.identifier && trace.agent_id === target.identifier &&
+        trace.environment === 'local' && ['llm', 'template'].includes(trace.type)));
+    if (requestTrace && !saved.some(run => run.id === requestTrace.id)) saved.unshift(requestTrace);
+    return saved.slice(0, 30);
+  }
+
+  function draw() {
+    const runs = recentRuns();
+    if (!selectedRun) selectedRun = runs[0];
+    runList.replaceChildren(...runs.map(run => {
+      const row = element('button', undefined, 'studio-run');
+      if (selectedRun?.id === run.id) row.setAttribute('aria-current', 'true');
+      const label = typeof run.input === 'string' && run.input.trim() ? run.input : 'JSON input';
+      const main = element('span', label, 'studio-run-name');
+      const meta = element('span', timeLabel(run.at), 'studio-run-time');
+      row.append(main, meta, statusPill(runStatus(run)));
+      row.addEventListener('click', () => {
+        selectedRun = run;
+        lastError = undefined;
+        draw();
+        runList.querySelector('[aria-current]')?.focus();
+      });
+      return row;
+    }));
+    if (!runs.length) runList.append(element('p', 'No runs yet.', 'history-empty'));
+
+    if (pending || lastError) {
+      session.replaceChildren(element('p', pending ? 'Running…' : lastError,
+        pending ? 'studio-pending' : 'studio-response is-error'));
+      return;
+    }
+    if (!selectedRun) {
+      session.replaceChildren(element('h2', 'Test ' + current().name),
+        element('p', 'Run a test to see its response and execution trace.'));
+      return;
+    }
+    const run = selectedRun;
+    const failed = runStatus(run) === 'error';
+    const input = element('article', undefined, 'studio-message user-message');
+    input.append(element('h3', 'Input'), readableContent(run.input));
+    const reply = element('article', undefined, 'studio-message');
+    const header = element('header', undefined, 'studio-response-head');
+    header.append(element('h3', failed ? 'Run failed' : 'Response'), statusPill(runStatus(run)),
+      element('span', latency(run.duration) + ' · ' + number.format(run.tokens) + ' tokens', 'step-time'));
+    const actions = element('div', undefined, 'section-actions');
+    const inspect = element('button', 'View trace', 'button');
+    inspect.addEventListener('click', () => showTrace(run));
+    const reuse = element('button', 'Reuse input', 'button quiet');
+    reuse.addEventListener('click', () => {
+      message.value = current().instructions && typeof run.input === 'string' ? run.input : JSON.stringify(run.input ?? null, null, 2);
+      message.focus();
+    });
+    actions.append(inspect, reuse);
+    reply.append(header, readableContent(failed ? run.error ?? 'Run failed' : run.output), actions);
+    session.replaceChildren(input, reply);
+  }
+
+  function readableContent(value) {
+    if (typeof value === 'string') return element('div', value, 'studio-message-text');
+    return element('pre', JSON.stringify(value ?? null, null, 2));
+  }
+
+  message.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !pending) {
+      event.preventDefault();
+      form.requestSubmit();
+    }
+  });
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (pending) return;
+    const target = current();
+    let input;
+    try {
+      input = target.instructions ? message.value : jsonInput(message.value);
+      if (target.instructions && !input.trim()) throw new Error('Enter a test message.');
+    } catch (error) {
+      lastError = error.message;
+      draw();
+      return;
+    }
+    pending = true;
+    lastError = undefined;
+    targetInput.disabled = true;
+    send.disabled = true;
+    runList.inert = true;
+    draw();
+    const submitted = message.value;
+    try {
+      const trace = await platformRequest('/runs', {target:target.id, target_kind:target.kind, input});
+      selectedRun = requestTrace = trace;
+      if (message.value === submitted) message.value = '';
+      refresh();
+    } catch (error) {
+      lastError = error.message;
+    } finally {
+      pending = false;
+      targetInput.disabled = false;
+      send.disabled = false;
+      runList.inert = false;
+      draw();
+    }
+  });
+  refreshWorkspaceView = () => {if (panel.isConnected && !pending && !byId('trace-inspector').open && !runList.contains(document.activeElement)) draw();};
+  selectTarget(false);
+  return panel;
 }
 
 function agentRegistry() {
@@ -480,50 +616,121 @@ function agentRegistry() {
     panel.append(empty);
     return panel;
   }
-
-  const head = element('header');
-  const heading = element('div');
-  const count = element('p');
+  const head = element('header', undefined, 'registry-toolbar');
   const search = element('input');
   search.type = 'search';
   search.placeholder = 'Search agents…';
+  search.value = registryFilters.query;
   search.setAttribute('aria-label', 'Search agents');
-  heading.append(element('h2', 'Agent registry'), count);
-  head.append(heading, search);
-  const list = element('div', undefined, 'agent-list');
+  const source = element('select');
+  source.setAttribute('aria-label', 'Agent type');
+  source.append(new Option('All types', ''), new Option('Studio', 'studio'), new Option('External', 'external'));
+  source.value = registryFilters.source;
+  const sort = element('select');
+  sort.setAttribute('aria-label', 'Sort agents');
+  sort.append(new Option('Most recent run', 'recent'), new Option('Agent name', 'name'));
+  sort.value = registryFilters.sort;
+  const count = element('p', undefined, 'registry-count');
+  head.append(search, source, sort, count);
+  const grid = element('div', undefined, 'table-wrap registry-table');
+  const table = element('table');
+  table.setAttribute('aria-label', 'Agent registry');
+  const headers = element('tr');
+  for (const column of ['Agent', 'Model', 'Last run', 'Runs · 7d', 'Error rate · 7d', 'Actions']) {
+    const cell = element('th', column);
+    cell.scope = 'col';
+    headers.append(cell);
+  }
+  const thead = element('thead');
+  thead.append(headers);
+  const rows = element('tbody');
+  table.append(thead, rows);
+  grid.append(table);
+  panel.append(head, grid);
+
+  function stats() {
+    const oneWeekAgo = Date.now() - 7 * 86400000;
+    const map = new Map();
+    if (traces === demo) return map;
+    for (const trace of traces) {
+      if (!trace.agent_id) continue;
+      const time = Date.parse(trace.at);
+      if (!Number.isFinite(time)) continue;
+      const old = map.get(trace.agent_id) ?? {last:0, total:0, errors:0};
+      old.last = Math.max(old.last, time);
+      if (time >= oneWeekAgo) {
+        old.total++;
+        if (trace.status === 'error') old.errors++;
+      }
+      map.set(trace.agent_id, old);
+    }
+    return map;
+  }
+
   function draw() {
-    const query = search.value.trim().toLowerCase();
-    const filtered = agents.filter(agent => [agent.name, agent.identifier, agent.provider && recordName(agent.provider)]
-      .some(value => value?.toLowerCase().includes(query)));
+    const activity = stats();
+    const query = registryFilters.query.trim().toLowerCase();
+    const filtered = agents.filter(agent =>
+      (!registryFilters.source || (agent.source ?? 'studio') === registryFilters.source) &&
+      [agent.name, agent.identifier, agent.provider && recordName(agent.provider)]
+        .some(value => value?.toLowerCase().includes(query))
+    );
+    const byName = (first, second) => first.name.localeCompare(second.name);
+    filtered.sort(registryFilters.sort === 'name' ? byName : (first, second) =>
+      (activity.get(second.identifier)?.last ?? 0) - (activity.get(first.identifier)?.last ?? 0) || byName(first, second));
     count.textContent = number.format(filtered.length) + (filtered.length === 1 ? ' agent' : ' agents');
-    list.replaceChildren(...filtered.map(agent => {
-      const row = element('article', undefined, 'agent-row');
-      const identity = element('div', undefined, 'agent-identity');
+
+    rows.replaceChildren(...filtered.map(agent => {
+      const row = element('tr');
       const external = agent.source === 'external';
+      const identity = element('div', undefined, 'agent-identity');
       const avatar = element('span', Array.from(agent.name.trim())[0]?.toUpperCase() ?? 'A', 'agent-avatar');
       avatar.setAttribute('aria-hidden', 'true');
       const labels = element('div');
-      labels.append(element('h3', agent.name), element('p', external ? 'External agent' : 'Studio agent'));
+      const details = element('button', agent.name, 'agent-name');
+      details.addEventListener('click', () => agentSettings(agent));
+      labels.append(details, element('p', external ? 'External agent' : 'Studio agent'));
       identity.append(avatar, labels);
       const actions = element('div', undefined, 'agent-actions');
-      const settings = element('button', 'Details', 'button');
-      settings.setAttribute('aria-label', 'Details for ' + agent.name);
-      settings.addEventListener('click', () => agentSettings(agent));
-      actions.append(settings);
+      if (agent.identifier) {
+        const openTraces = element('button', 'Traces', 'button quiet');
+        openTraces.setAttribute('aria-label', 'View traces for ' + agent.name);
+        openTraces.addEventListener('click', () => openAgentTraces(agent));
+        actions.append(openTraces);
+      }
       if (!external) {
-        const studio = element('button', 'Open in Studio', 'button primary');
+        const studio = element('button', 'Open Studio', 'button');
+        studio.setAttribute('aria-label', 'Open ' + agent.name + ' in Studio');
         studio.addEventListener('click', () => loadModule('studio', agent.id));
         actions.append(studio);
       }
-      const model = external ? '—' : agent.provider ? recordName(agent.provider) : 'Workspace default';
-      row.append(identity, element('p', model, 'agent-model'), actions);
+      const usage = activity.get(agent.identifier);
+      const values = [
+        identity, external ? '—' : agent.provider ? recordName(agent.provider) : 'Workspace default',
+        tracesReady ? timeLabel(usage?.last) : '—', tracesReady ? number.format(usage?.total ?? 0) : '—',
+        usage?.total ? (100 * usage.errors / usage.total).toFixed(1) + '%' : '—', actions
+      ];
+      values.forEach((value, index) => {
+        const cell = element('td');
+        if (index > 1 && index < 5) cell.className = 'registry-metric';
+        cell.append(value);
+        row.append(cell);
+      });
       return row;
     }));
-    if (!filtered.length) list.append(element('p', 'No matching agents.', 'empty'));
+    if (!filtered.length) {
+      const empty = element('td', 'No matching agents.', 'empty');
+      empty.colSpan = 6;
+      const row = element('tr');
+      row.append(empty);
+      rows.append(row);
+    }
   }
-  search.addEventListener('input', draw);
+  search.addEventListener('input', () => {registryFilters.query = search.value; draw();});
+  source.addEventListener('change', () => {registryFilters.source = source.value; draw();});
+  sort.addEventListener('change', () => {registryFilters.sort = sort.value; draw();});
+  refreshWorkspaceView = () => {if (panel.isConnected && !rows.contains(document.activeElement)) draw();};
   draw();
-  panel.append(head, list);
   return panel;
 }
 

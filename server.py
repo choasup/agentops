@@ -215,7 +215,8 @@ class Handler(SimpleHTTPRequestHandler):
                 step['error'] = str(error)
                 status = 'error'
             step['duration'] = (time.perf_counter() - start) * 1000
-            trace = dict(step, id=uuid4().hex, name=target['name'], project=kind + ':' + target['name'],
+            trace = dict(step, id=uuid4().hex, name=target['name'], target_id=target['id'],
+                         project=kind + ':' + target['name'],
                          status=status, at=datetime.now(timezone.utc).isoformat(), tokens=tokens, cost=0, steps=[step])
             if target.get('identifier'):
                 trace.update(agent_id=target['identifier'], environment='local', project='agent:' + target['identifier'])

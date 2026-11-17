@@ -173,7 +173,7 @@ tbody tr:hover {background: #f9faff}
 
 .module-grid {display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; align-items: start}
 .module-panel {padding: 19px; margin: 0}
-.module-panel.wide {grid-column: 1/-1}
+.module-grid > .wide {grid-column: 1/-1}
 .module-panel > h2 + p {margin-top: 5px}
 .module-form {display: grid; gap: 13px; margin-top: 15px}
 .module-form label {display: grid; gap: 5px; min-width: 0; font-size: 13px; font-weight: 620}
@@ -195,14 +195,11 @@ summary {font-weight: 600}
 .agent-panel header {padding: 17px 19px; display: flex; align-items: center; justify-content: space-between; gap: 12px}
 .agent-panel header p {font-size: 12px; margin-top: 2px}
 .agent-list {border-top: 1px solid var(--border)}
-.agent-row {display: grid; grid-template-columns: minmax(150px,1fr) minmax(100px,.7fr) auto; align-items: center; gap: 15px; padding: 12px 19px; min-height: 76px}
-.agent-row + .agent-row {border-top: 1px solid #edf0f6}
 .agent-identity {display: flex; align-items: center; gap: 11px; min-width: 0}
 .agent-identity > div {min-width: 0}
 .agent-identity h3, .agent-identity p {overflow: hidden; text-overflow: ellipsis; white-space: nowrap}
 .agent-identity p {color: var(--subtle); font-size: 12px}
 .agent-avatar {display: grid; flex: none; place-items: center; width: 36px; height: 36px; border: 1px solid #e0e5ff; border-radius: 9px; background: var(--accent-soft); color: var(--accent-dark); font-weight: 690}
-.agent-model {color: var(--muted); overflow-wrap: anywhere; font-size: 13px}
 .agent-actions {display: flex; flex-wrap: wrap; justify-content: end; gap: 6px}
 .agent-empty {display: grid; justify-items: center; text-align: center; gap: 9px; padding: 43px 20px}
 .agent-empty .mark {width: 53px; height: 53px; margin-bottom: 6px}
@@ -212,7 +209,6 @@ summary {font-weight: 600}
 .agent-mode {display: grid; gap: 8px}
 .agent-mode button {padding: 12px; justify-content: start; text-align: left; white-space: normal; min-width: 0}
 .agent-mode button[aria-pressed="true"] {border-color: #a4affb; color: var(--accent-dark); background: var(--accent-soft)}
-.studio-result {min-height: 240px; display: flex; flex-direction: column; gap: 11px}
 .studio-response {padding: 14px; border-radius: 9px; background: #f4f6ff; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink)}
 .studio-response.is-error {background: #fceef0; color: #8e2c43}
 
@@ -226,9 +222,6 @@ dialog::backdrop {background: #111a3a70}
 .trace-inspector {height: 100dvh; max-height: 100dvh; margin: 0 0 0 auto; width: min(660px,100%); border-radius: 14px 0 0 14px}
 .trace-meta {display: flex; gap: 7px; flex-wrap: wrap; align-items: center}
 .trace-id {padding-top: 8px; font-size: 12px; color: var(--subtle); overflow-wrap: anywhere}
-.run-tree {margin-top: 9px; padding: 8px 11px; border: 1px solid var(--border); border-radius: 9px; background: #fcfdff}
-.run-tree summary {overflow-wrap: anywhere; font-size: 13px}
-.run-tree details details {margin-left: 13px; padding-left: 10px; border-left: 1px solid var(--border)}
 
 .sign-in {display: grid; grid-template-columns: minmax(320px,.93fr) minmax(0,1.07fr); min-height: 100dvh; background: var(--surface)}
 .sign-in-art {
@@ -279,8 +272,6 @@ dialog::backdrop {background: #111a3a70}
 
 @media (max-width: 1000px) {
   .shell {grid-template-columns: 190px minmax(0,1fr)}
-  .agent-row {grid-template-columns: minmax(145px,1fr) auto}
-  .agent-model {display: none}
   .day:nth-child(even) span {visibility: hidden}
 }
 @media (max-width: 800px) {
@@ -301,7 +292,6 @@ dialog::backdrop {background: #111a3a70}
   .content {padding: 22px 16px 30px}
   .panel-head {padding: 13px}
   .agent-panel header {padding: 13px; flex-wrap: wrap}
-  .agent-row {padding: 11px 13px; gap: 7px; grid-template-columns: minmax(0,1fr)}
   .agent-actions {justify-content: start}
   .agent-identity p {white-space: normal; overflow-wrap: anywhere}
   .sign-in {display: block}
@@ -310,5 +300,108 @@ dialog::backdrop {background: #111a3a70}
   .mobile-brand {display: flex}
 }
 
-.studio-result > .button {align-self: flex-start}
 #boot-screen:has(button) {align-content: center; gap: 12px; padding: 24px; text-align: center}
+
+/* Work surfaces */
+.shell {--workspace-canvas:#f9fafb; background:var(--workspace-canvas)}
+.sidebar {background:#f7f8fa; padding-inline:12px}
+.sidebar-header {margin-bottom:22px}
+.sidebar .brand {font-size:17px; letter-spacing:-.035em}
+.sidebar .mark {width:30px; height:30px}
+.nav {min-height:34px; font-size:12.5px}
+.nav.active {background:#e9edf9; color:#2b3e83; border-color:transparent}
+.top {min-height:57px}
+.content {padding-top:26px}
+.module-heading, .heading {margin-bottom:19px}
+.module-heading h1, .heading h1 {font-size:clamp(26px,3.6vw,32px); letter-spacing:-.043em}
+.module-heading p, .heading p {font-size:13px; margin-top:5px}
+.agent-panel, .studio-workspace {border-radius:10px; box-shadow:none}
+.agent-panel .registry-toolbar {justify-content:flex-start; flex-wrap:wrap; gap:8px; padding:11px 13px}
+.registry-toolbar > input {width:min(250px, 100%)}
+.registry-toolbar > input, .registry-toolbar > select {min-height:33px; padding:5px 8px}
+.registry-toolbar .registry-count {margin-left:auto; color:var(--subtle)}
+.registry-table table {min-width:860px; font-size:12.5px}
+.registry-table th {font-size:11px; color:#536078}
+.registry-table th, .registry-table td {padding-inline:13px}
+.registry-table td {height:58px; padding-block:8px}
+.registry-table .agent-identity {min-width:160px; gap:9px}
+.registry-table .agent-avatar {width:31px; height:31px; border-radius:7px}
+.agent-name {padding:0; background:none; border:0; color:var(--ink); font-size:13px; font-weight:680; text-align:left}
+.agent-name:hover {color:var(--accent-dark); text-decoration:underline}
+.registry-metric {font-variant-numeric:tabular-nums; color:var(--muted)}
+.registry-table .button, .inspector-summary > .button {min-height:30px; padding:4px 8px; font-size:12px}
+
+.studio-toolbar {display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:11px 15px; border-bottom:1px solid var(--border)}
+.studio-toolbar > label {display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--muted); font-size:12px; font-weight:650; min-width:0}
+.studio-toolbar select {min-height:32px; max-width:min(100%, 310px); padding-block:4px}
+.studio-toolbar .button {margin-left:auto; min-height:32px}
+.studio-model {border:1px solid var(--border); color:var(--muted); border-radius:6px; padding:3px 7px; font-size:11px; overflow-wrap:anywhere}
+.studio-split {display:grid; grid-template-columns:minmax(188px, 26%) minmax(0,1fr); min-height:min(580px, calc(100dvh - 244px))}
+.studio-history {padding:14px 10px; border-right:1px solid var(--border); min-width:0; background:#fbfcfe; border-radius:0 0 0 10px}
+.studio-history h2 {font-size:12px; padding:0 7px 10px}
+.studio-run-list {display:grid; align-content:start; gap:3px; max-height:480px; overflow:auto}
+.studio-run {display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:4px; padding:8px; border:1px solid transparent; border-radius:7px; background:none; text-align:left; color:var(--ink)}
+.studio-run:hover {background:#f0f2fa}
+.studio-run[aria-current] {background:#ebeffa; border-color:#e2e7f5}
+.studio-run-name {grid-column:1/-1; font-size:12px; font-weight:650; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.studio-run-time, .history-empty {font-size:11px; color:var(--subtle)}
+.history-empty {padding:4px 7px}
+.studio-stage {min-width:0; display:flex; flex-direction:column}
+.studio-stream {flex:1; padding:24px clamp(14px,4vw,44px); min-height:260px; overflow-wrap:anywhere}
+.studio-stream > h2 {margin-top:20px}
+.studio-stream > p {margin-top:7px}
+.studio-message {padding:16px 0; max-width:78ch}
+.studio-message + .studio-message {border-top:1px solid var(--border)}
+.studio-message h3 {font-size:13px}
+.studio-message.user-message {padding-top:0}
+.studio-message-text {white-space:pre-wrap; overflow-wrap:anywhere; margin-top:7px; line-height:1.65}
+.studio-response-head {display:flex; align-items:center; gap:7px; flex-wrap:wrap}
+.studio-message .section-actions {margin-top:12px}
+.studio-pending::before {content:""; display:inline-block; width:8px; height:8px; margin-right:8px; border-radius:50%; background:var(--accent)}
+.studio-composer {display:grid; gap:8px; border-top:1px solid var(--border); padding:13px clamp(14px,4vw,44px)}
+.studio-composer textarea {resize:vertical; padding:9px 11px; width:100%; min-height:65px}
+.composer-footer {display:flex; align-items:center; justify-content:space-between; gap:10px}
+.composer-footer p {font-size:11px}
+.composer-footer .button {min-width:72px; min-height:33px}
+
+.trace-inspector {width:min(900px,100%); border-radius:10px 0 0 10px}
+.trace-inspector .modal-head {padding:11px 16px}
+#trace-body {padding:0}
+.inspector-summary {padding:12px 16px; display:flex; justify-content:space-between; align-items:flex-start; gap:12px; border-bottom:1px solid var(--border)}
+.inspector-summary input {min-width:0; max-width:60%}
+.inspector-split {display:grid; grid-template-columns:minmax(200px, 32%) minmax(0,1fr); min-height:calc(100dvh - 135px)}
+.step-tree {background:#f9fafc; border-right:1px solid var(--border); padding:13px 8px; min-width:0}
+.inspector-label {font-size:11px; color:var(--subtle); padding:0 7px 8px}
+.step-row {display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:6px; border:1px solid transparent; border-radius:6px; padding:7px 6px 7px calc(6px + var(--depth, 0) * 8px); width:100%; background:none; color:var(--ink); text-align:left}
+.step-row:hover {background:#eff2fa}
+.step-row[aria-current] {background:#edf0fb; border-color:#e0e6f9; color:#2c3d83}
+.step-name {font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.step-time {font-variant-numeric:tabular-nums; font-size:11px; color:var(--subtle); white-space:nowrap}
+.step-dot {height:6px; width:6px; background:#8392a7; border-radius:50%}
+.step-dot.success {background:#278763}
+.step-dot.error {background:#cb415e}
+.step-detail {min-width:0; padding:14px 16px}
+.trace-tabs {display:flex; align-items:center; gap:4px; margin-top:8px; border-bottom:1px solid var(--border); flex-wrap:wrap}
+.trace-tab {padding:6px 8px; border:0; border-bottom:2px solid transparent; background:none; color:var(--muted); font-size:12px; font-weight:600}
+.trace-tab:hover {color:var(--ink)}
+.trace-tab[aria-pressed="true"] {color:var(--accent-dark); border-bottom-color:var(--accent)}
+.step-content {padding-top:10px}
+.step-content pre {margin:0}
+.run-facts {display:grid; grid-template-columns:minmax(70px,25%) minmax(0,1fr); margin:0; gap:8px; font-size:12px}
+.run-facts dt {color:var(--muted)}
+.run-facts dd {margin:0; overflow-wrap:anywhere}
+
+@media (max-width:680px) {
+  .studio-split, .inspector-split {grid-template-columns:minmax(0,1fr)}
+  .studio-history, .step-tree {border-right:0; border-bottom:1px solid var(--border); border-radius:0}
+  .studio-run-list, .step-tree > div {max-height:164px; overflow:auto}
+  .studio-stream {min-height:200px}
+  .trace-inspector {border-radius:0}
+  .inspector-split {min-height:0}
+  .registry-toolbar .registry-count {margin-left:0}
+  .registry-table table {min-width:0}
+  .registry-table td, .registry-table th {padding-inline:8px}
+  .registry-table tr > :nth-child(n+2):nth-child(-n+5) {display:none}
+  .registry-table .agent-identity {min-width:0}
+  .registry-table .agent-actions {display:grid; justify-content:end; gap:3px}
+}
