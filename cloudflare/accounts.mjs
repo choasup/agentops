@@ -92,6 +92,8 @@ async function emailCodeDigest(secret, challenge, identity, code) {
   )));
 }
 
+const validPassword = value => typeof value === 'string' && value.length >= 12 && value.length <= 128;
+
 async function passwordHash(password, salt) {
   const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
   return hex(await crypto.subtle.deriveBits({
@@ -178,7 +180,7 @@ export class Accounts extends DurableObject {
       [channel + ':recipient:' + identityDigest, 3, 1800000], [channel + ':cooldown:' + identityDigest, 1, 60000]
     ])) return json({error:'请求过于频繁，请稍后再试。'}, 429);
     const challenge = randomId();
-    const label = {login:'登录', register:'注册', reset:'重置密码'}[purpose];
+    const label = purpose === 'register' ? '注册' : '重置密码';
     this.sql.exec('INSERT OR REPLACE INTO challenges VALUES (?,?,?,0,?)', challenge, identity, now + challengeAge, 'sending');
     try {
       if (channel === 'email') {
@@ -211,14 +213,40 @@ export class Accounts extends DurableObject {
     return json({challenge, retry_after:60});
   }
 
+  issueSession(account, token, digest) {
+    const now = Date.now();
+    this.sql.exec('DELETE FROM sessions WHERE expires<=?', now);
+    this.sql.exec('INSERT INTO sessions VALUES (?,?,?,?)', digest, account.phone, now, now + sessionAge);
+    const response = json({user:viewer(account)});
+    response.headers.append('Set-Cookie', cookie(sessionCookie, token, sessionAge / 1000));
+    response.headers.append('Set-Cookie', cookie(workspaceCookie, '', 0));
+    return response;
+  }
+
+  async login(identity, password, address) {
+    const invalid = () => json({error:'账号或密码不正确。如果还未设置密码，请使用「找回密码」。'}, 401);
+    if (!validPassword(password)) return invalid();
+    const [ip, recipient] = await Promise.all([sha256(address || 'unknown'), sha256(identity)]);
+    this.sql.exec('DELETE FROM limits WHERE expires<=?', Date.now());
+    if (!this.takeLimits([['login:ip:' + ip, 30, 600000], ['login:recipient:' + recipient, 10, 600000]])) {
+      return json({error:'登录尝试过多，请稍后再试。'}, 429);
+    }
+    const account = this.one('SELECT * FROM accounts WHERE phone=?', identity);
+    const submitted = await passwordHash(password, account?.salt ?? 'agent-deck-login');
+    if (!account?.password || !constantTime(submitted, account.password)) return invalid();
+    const token = randomId() + randomId();
+    const digest = await sha256(token);
+    const current = this.one('SELECT * FROM accounts WHERE phone=? AND password=? AND salt=?', identity, account.password, account.salt);
+    if (!current) return invalid();
+    this.sql.exec('DELETE FROM limits WHERE name=?', 'login:recipient:' + recipient);
+    return this.issueSession(current, token, digest);
+  }
+
   async verify(phone, body, guest, channel) {
     const {challenge, code, password, reset_password, purpose} = body;
-    const reset = purpose === 'reset';
     const register = purpose === 'register';
-    if (!reset && reset_password !== undefined) return json({error:'请使用找回密码流程。'}, 400);
-    if (reset && (typeof reset_password !== 'string' || reset_password.length < 12 || reset_password.length > 128)) {
-      return json({error:'新密码长度需为 12 至 128 个字符。'}, 400);
-    }
+    const newValue = register ? password : reset_password;
+    if (!validPassword(newValue)) return json({error:'密码长度需为 12 至 128 个字符。'}, 400);
     if (typeof challenge !== 'string' || !workspacePattern.test(challenge) || typeof code !== 'string' || !/^\d{6}$/.test(code)) {
       return json({error:'请输入有效的六位验证码。'}, 400);
     }
@@ -242,34 +270,23 @@ export class Accounts extends DurableObject {
       const account = this.one('SELECT * FROM accounts WHERE phone=?', phone);
       if (register && account) return json({error:'此账号已注册，请返回登录。'}, 409);
       if (!register && !account) return json({error:'此账号尚未注册，请先创建账号。'}, 404);
-      if (purpose === 'login' && account.password) {
-        const valid = typeof password === 'string' && password.length <= 128 &&
-          constantTime(await passwordHash(password, account.salt), account.password);
-        if (!valid) return json({error:'此账号需要正确的密码和验证码。'}, 401);
-      }
       const token = randomId() + randomId();
       const hashed = await sha256(token);
-      const newSalt = reset ? randomId() : null;
-      const newPassword = reset ? await passwordHash(reset_password, newSalt) : null;
+      const newSalt = randomId();
+      const newPassword = await passwordHash(newValue, newSalt);
       const consumed = this.one("DELETE FROM challenges WHERE id=? AND state='checking' AND expires>? RETURNING id", challenge, Date.now());
       if (!consumed) return json({error:'验证码已失效，请重新获取。'}, 401);
       if (channel === 'email') this.sql.exec('DELETE FROM email_codes WHERE id=?', challenge);
       if (register) {
         const candidate = workspacePattern.test(guest ?? '') ? guest : randomId();
         const occupied = this.one('SELECT 1 FROM accounts WHERE workspace=?', candidate);
-        this.sql.exec('INSERT INTO accounts (phone,workspace) VALUES (?,?)', phone, occupied ? randomId() : candidate);
-      }
-      if (reset) {
+        this.sql.exec('INSERT INTO accounts (phone,workspace,password,salt) VALUES (?,?,?,?)',
+          phone, occupied ? randomId() : candidate, newPassword, newSalt);
+      } else {
         this.sql.exec('UPDATE accounts SET password=?,salt=? WHERE phone=?', newPassword, newSalt, phone);
         this.sql.exec('DELETE FROM sessions WHERE phone=?', phone);
       }
-      this.sql.exec('DELETE FROM sessions WHERE expires<=?', now);
-      this.sql.exec('INSERT INTO sessions VALUES (?,?,?,?)', hashed, phone, now, now + sessionAge);
-      const current = this.one('SELECT * FROM accounts WHERE phone=?', phone);
-      const response = json({user:viewer(current)});
-      response.headers.append('Set-Cookie', cookie(sessionCookie, token, sessionAge / 1000));
-      response.headers.append('Set-Cookie', cookie(workspaceCookie, '', 0));
-      return response;
+      return this.issueSession(this.one('SELECT * FROM accounts WHERE phone=?', phone), token, hashed);
     } finally {
       this.sql.exec("UPDATE challenges SET state=? WHERE id=? AND state='checking'", ready, challenge);
     }
@@ -297,7 +314,7 @@ export class Accounts extends DurableObject {
       const account = await this.getSession(token);
       if (!account) return json({error:'请先登录。'}, 401);
       const password = body.password;
-      if (typeof password !== 'string' || password.length < 12 || password.length > 128) {
+      if (!validPassword(password)) {
         return json({error:'密码长度需为 12 至 128 个字符。'}, 400);
       }
       if (Date.now() - account.issued > 600000) return json({error:'请重新登录后再设置密码。'}, 403);
@@ -308,18 +325,18 @@ export class Accounts extends DurableObject {
       this.sql.exec('DELETE FROM sessions WHERE phone=? AND token!=?', account.phone, currentSession);
       return json({ok:true});
     }
-    if (!['/send', '/verify'].includes(action)) return json({error:'Unknown auth action'}, 404);
-    const purpose = body.purpose;
-    if (!['login', 'register', 'reset'].includes(purpose)) {
-      return json({error:'请选择登录、注册或找回密码。'}, 400);
-    }
+    if (!['/login', '/send', '/verify'].includes(action)) return json({error:'Unknown auth action'}, 404);
     const useEmail = body.email !== undefined;
-    if (!useEmail && !smsConfigured(this.env)) return json({error:'短信服务尚未配置。'}, 503);
-    if (useEmail && !emailConfigured(this.env)) return json({error:'邮件服务尚未配置。'}, 503);
     const identity = useEmail ? emailAddress(body.email) : phoneNumber(body.phone);
     if (!identity) return json({error:useEmail ? '请输入有效的邮箱地址。' : '请输入中国大陆手机号。'}, 400);
+    const address = request.headers.get('X-AgentOps-Address');
+    if (action === '/login') return this.login(identity, body.password, address);
+    const purpose = body.purpose;
+    if (!['register', 'reset'].includes(purpose)) return json({error:'请选择注册或找回密码。'}, 400);
+    if (!useEmail && !smsConfigured(this.env)) return json({error:'短信服务尚未配置。'}, 503);
+    if (useEmail && !emailConfigured(this.env)) return json({error:'邮件服务尚未配置。'}, 503);
     const channel = useEmail ? 'email' : 'sms';
-    if (action === '/send') return this.send(identity, request.headers.get('X-AgentOps-Address'), channel, purpose);
+    if (action === '/send') return this.send(identity, address, channel, purpose);
     return this.verify(identity, body, guest, channel);
   }
 }

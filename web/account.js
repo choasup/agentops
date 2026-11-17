@@ -13,19 +13,20 @@ async function authRequest(action, data) {
 const accountButton = byId('account');
 
 const accountFlows = {
-  login: {title:'登录 Agent Deck', description:'使用验证码登录你的账号。', submit:'登录'},
+  login: {title:'登录 Agent Deck', description:'使用账号和密码登录。', submit:'登录'},
   register: {title:'创建 Agent Deck 账号', description:'验证你的邮箱或手机号，创建个人工作区。', submit:'创建账号'},
   reset: {title:'找回密码', description:'验证你的账号后设置新密码。', submit:'重置密码并登录'}
 };
 
 function accountForm(purpose, inline = false) {
-  if (!accountStatus.email_configured && !accountStatus.sms_configured) {
+  const login = purpose === 'login';
+  if (!login && !accountStatus.email_configured && !accountStatus.sms_configured) {
     return [element('p', '邮箱和短信登录入口已就绪，发信服务配置完成后可获取验证码。')];
   }
   const form = element('form', undefined, 'module-form');
   const channels = [];
-  if (accountStatus.email_configured) channels.push(['email', '邮箱']);
-  if (accountStatus.sms_configured) channels.push(['phone', '手机号']);
+  if (login || accountStatus.email_configured) channels.push(['email', '邮箱']);
+  if (login || accountStatus.sms_configured) channels.push(['phone', '手机号']);
   const method = field('method', '登录方式', channels);
   const methodInput = method.querySelector('select');
   methodInput.value = channels[0][0];
@@ -45,20 +46,16 @@ function accountForm(purpose, inline = false) {
   codeInput.inputMode = 'numeric';
   codeInput.autocomplete = 'one-time-code';
   codeInput.maxLength = 6;
-  const password = field('password', '账号密码（已设置密码时填写）', 'password');
+  const password = field('password', login ? '密码' :
+    (purpose === 'register' ? '设置密码（至少 12 个字符）' : '新密码（至少 12 个字符）'), 'password');
   const passwordInput = password.querySelector('input');
-  passwordInput.required = false;
-  passwordInput.autocomplete = 'current-password';
-  const reset = field('reset_password', '新密码（至少 12 个字符）', 'password');
-  const resetInput = reset.querySelector('input');
-  resetInput.autocomplete = 'new-password';
-  resetInput.required = true;
-  resetInput.minLength = 12;
-  resetInput.maxLength = 128;
+  passwordInput.autocomplete = login ? 'current-password' : 'new-password';
+  passwordInput.minLength = 12;
+  passwordInput.maxLength = 128;
   const send = element('button', '获取验证码', 'button');
   send.type = 'button';
   const submit = element('button', accountFlows[purpose].submit, 'button primary auth-submit');
-  submit.disabled = true;
+  submit.disabled = !login;
   const message = element('p');
   message.setAttribute('role', 'status');
   let challenge;
@@ -67,13 +64,13 @@ function accountForm(purpose, inline = false) {
   let countdown;
   const matchesRequest = () => addressInput.value.trim() === requestedAddress &&
     methodInput.value === requestedMethod;
-  addressInput.addEventListener('input', () => { submit.disabled = !matchesRequest(); });
+  addressInput.addEventListener('input', () => { if (!login) submit.disabled = !matchesRequest(); });
   methodInput.addEventListener('change', () => {
     setAddressType();
     addressInput.value = '';
     codeInput.value = '';
     message.textContent = '';
-    submit.disabled = true;
+    submit.disabled = !login;
     clearInterval(countdown);
     send.disabled = false;
     send.textContent = '获取验证码';
@@ -121,13 +118,16 @@ function accountForm(purpose, inline = false) {
 
   form.addEventListener('submit', async event => {
     event.preventDefault();
-    if (!challenge || !matchesRequest()) return;
+    if (!login && (!challenge || !matchesRequest())) return;
     submit.disabled = true;
     try {
-      const data = {[requestedMethod]:requestedAddress, challenge, code:codeInput.value.trim(), purpose};
-      if (purpose === 'reset') data.reset_password = resetInput.value;
-      else if (purpose === 'login' && passwordInput.value) data.password = passwordInput.value;
-      await authRequest('verify', data);
+      if (login) {
+        await authRequest('login', {[methodInput.value]:addressInput.value.trim(), password:passwordInput.value});
+      } else {
+        const passwordField = purpose === 'reset' ? 'reset_password' : 'password';
+        await authRequest('verify', {[requestedMethod]:requestedAddress, challenge, code:codeInput.value.trim(),
+          purpose, [passwordField]:passwordInput.value});
+      }
       const url = new URL(location.href);
       url.searchParams.delete('auth');
       location.replace(url.href);
@@ -138,9 +138,10 @@ function accountForm(purpose, inline = false) {
   });
   const row = element('div', undefined, 'auth-send-row');
   row.append(address, send);
-  form.append(method, row, code);
-  if (purpose === 'login') form.append(password);
-  if (purpose === 'reset') form.append(reset);
+  form.append(method);
+  if (login) form.append(address);
+  else form.append(row, code);
+  form.append(password);
   form.append(submit, message);
 
   const actions = element('div', undefined, 'auth-actions');
@@ -183,7 +184,7 @@ function accountSettings() {
   const form = formPanel(user.has_password ? '修改密码' : '设置密码', [password], '保存密码', async () => {
     await authRequest('password', {password:input.value});
     input.value = '';
-    form.querySelector('[role=status]').textContent = '密码已保存。下次登录请同时输入密码和验证码。';
+    form.querySelector('[role=status]').textContent = '密码已保存。下次使用新密码登录。';
   });
   const logout = element('button', '退出登录', 'button');
   const status = element('p');

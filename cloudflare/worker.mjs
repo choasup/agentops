@@ -114,7 +114,7 @@ export default {
         }
         return response;
       }
-      if (request.method !== 'POST' || !['send','verify','password','logout'].includes(action)) {
+      if (request.method !== 'POST' || !['login','send','verify','password','logout'].includes(action)) {
         return json({error:'Unknown auth endpoint'}, 404);
       }
       return accountRequest(action);
