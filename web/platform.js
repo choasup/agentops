@@ -75,7 +75,8 @@ function billingPanels() {
     const item = element('div', undefined, 'billing-entry');
     const key = apiKeys.find(key => key.id === entry.key_id);
     item.append(
-      element('strong', key ? key.name + ' · ' + entry.model : 'Top-up'),
+      element('strong', key ? key.name + ' · ' + entry.model :
+        entry.reference.startsWith('test-credit:') ? 'Test credit' : 'Top-up'),
       element('span', (entry.key_id ? '−' : '+') + billingMoney(Math.abs(entry.nanos))),
       element('small', timeLabel(entry.at))
     );
