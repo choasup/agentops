@@ -1,4 +1,4 @@
-# Agent Workshop
+# Agent Deck
 
 本地 Agent 观测控制台，参考 LangSmith Observability 的追踪和监控流程。
 
@@ -55,13 +55,13 @@ npx wrangler secret put AGENTOPS_INGEST_TOKEN
 
 支持 OpenAI 兼容的 Chat Completions 接口。Cloudflare 部署要求 HTTPS。本机 Python 版本也支持回环地址上的 HTTP 模型服务。模型密钥由服务端保存，列表和测试接口不会返回密钥。既有 Agent 仍可使用部署环境中配置的默认模型。
 
-Cloudflare Workers AI 测试连接使用独立的私有 Worker。新账号部署时，先用 `npx wrangler deploy --config cloudflare/workers-ai/wrangler.jsonc` 部署模型适配器，再为适配器设置 `ADAPTER_KEY`。Agent Workshop 通过服务绑定调用它，其他模型继续通过各自的 HTTPS 端点调用。
+Cloudflare Workers AI 测试连接使用独立的私有 Worker。新账号部署时，先用 `npx wrangler deploy --config cloudflare/workers-ai/wrangler.jsonc` 部署模型适配器，再为适配器设置 `ADAPTER_KEY`。Agent Deck 通过服务绑定调用它，其他模型继续通过各自的 HTTPS 端点调用。
 
 ## 开放平台
 
-**Models** 支持 DeepSeek、阿里云百炼（北京预设）和自定义 OpenAI 兼容接口。百炼的区域地址要与供应商 API Key 一致，可以填业务空间专属域名。保存后可发消息测试、更新连接或轮换密钥。Agent 可以更换绑定的模型。模型供应商的密钥在后端加密保存，不能从列表读出。保留部署用的 `AGENTOPS_INGEST_TOKEN`，更换它会使已加密的模型密钥和已签发的 Agent Workshop API Key 失效。
+**Models** 支持 DeepSeek、阿里云百炼（北京预设）和自定义 OpenAI 兼容接口。百炼的区域地址要与供应商 API Key 一致，可以填业务空间专属域名。保存后可发消息测试、更新连接或轮换密钥。Agent 可以更换绑定的模型。模型供应商的密钥在后端加密保存，不能从列表读出。保留部署用的 `AGENTOPS_INGEST_TOKEN`，更换它会使已加密的模型密钥和已签发的 Agent Deck API Key 失效。
 
-**API Keys** 签发的是 Agent Workshop 密钥。密钥创建时显示一次，服务端仅保留摘要，支持查看最近使用时间和即时撤销。权限按接口划分：
+**API Keys** 签发的是 Agent Deck 密钥。密钥创建时显示一次，服务端仅保留摘要，支持查看最近使用时间和即时撤销。权限按接口划分：
 
 | 权限 | 接口 |
 | --- | --- |

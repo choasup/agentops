@@ -295,5 +295,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     with database() as connection:
         connection.execute('CREATE TABLE IF NOT EXISTS traces (payload TEXT NOT NULL)')
-    print(f'Agent Workshop · http://127.0.0.1:{args.port}', flush=True)
+    print(f'Agent Deck · http://127.0.0.1:{args.port}', flush=True)
     ThreadingHTTPServer(('127.0.0.1', args.port), Handler).serve_forever()

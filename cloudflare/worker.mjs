@@ -136,7 +136,7 @@ export default {
     const {user, workspace:accountWorkspace, claimed} = await (await accountRequest('resolve')).json();
     if (!user && (env.REQUIRE_LOGIN === 'true' || claimed)) return json({error:'Please sign in to continue'}, 401);
     const workspace = accountWorkspace ?? guest;
-    if (!workspacePattern.test(workspace ?? '')) return json({error:'请打开 Agent Workshop 以初始化工作区'}, 401);
+    if (!workspacePattern.test(workspace ?? '')) return json({error:'请打开 Agent Deck 以初始化工作区'}, 401);
     if (pathname === '/api/workspace' && request.method === 'GET') {
       if (user) return json({error:'Create a scoped key under API Keys'}, 403);
       if (!secret) return json({error:'Trace ingestion has not been configured'}, 503);
