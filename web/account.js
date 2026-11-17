@@ -23,12 +23,15 @@ function accountForm(purpose, inline = false) {
   if (!login && !accountStatus.email_configured && !accountStatus.sms_configured) {
     return [element('p', '邮箱和短信登录入口已就绪，发信服务配置完成后可获取验证码。')];
   }
-  const form = element('form', undefined, 'module-form');
+  const form = element('form', undefined, 'module-form auth-form');
   const channels = [];
   if (login || accountStatus.email_configured) channels.push(['email', '邮箱']);
   if (login || accountStatus.sms_configured) channels.push(['phone', '手机号']);
   const method = field('method', '登录方式', channels);
   const methodInput = method.querySelector('select');
+  const methodControl = element('span', undefined, 'auth-select');
+  methodControl.append(methodInput, icon('chevron-down'));
+  method.append(methodControl);
   methodInput.value = channels[0][0];
   method.hidden = channels.length === 1;
   const address = field('address', '邮箱地址', 'email');

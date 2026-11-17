@@ -258,6 +258,11 @@ dialog::backdrop {background: #111a3a70}
 .auth-actions {display: flex; align-items: center; flex-wrap: wrap; gap: 6px}
 .sign-in-card input, .sign-in-card select, .sign-in-card .button {min-height: 42px}
 .sign-in-card .auth-submit {width: 100%}
+.auth-form {--field-inset: 12px}
+.auth-form input, .auth-form select {padding-inline: var(--field-inset)}
+.auth-select {position: relative; display: grid; align-items: center}
+.auth-select select {appearance: none; padding-inline-end: calc(2 * var(--field-inset) + 16px)}
+.auth-select .ui-icon {position: absolute; inset-inline-end: var(--field-inset); width: 16px; height: 16px; pointer-events: none; color: var(--ink)}
 .sign-in-card [role=status] {color: var(--muted)}
 .loading {display: flex; justify-content: center; align-items: center; min-height: 105px; color: var(--muted)}
 .loading-page {min-height: 100dvh; display: grid; place-items: center}
