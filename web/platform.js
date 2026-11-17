@@ -90,14 +90,20 @@ function billingPanels() {
 
 function hostedModelPanel() {
   const identity = element('div', undefined, 'provider-identity');
+  const enabled = billing.model_available;
   identity.append(providerMark('deepseek'), element('strong', billing.model),
-    element('span', billing.model_available ? 'Available' : 'Unavailable', 'pill'));
+    element('span', enabled ? 'Enabled' : 'Platform setup required', enabled ? 'pill success' : 'pill'));
+  const panel = listPanel('Hosted models', [identity]);
+  panel.classList.add('wide', 'hosted-model-panel');
+  if (!enabled) {
+    panel.append(element('p', 'Agent Deck hasn’t configured its DeepSeek API key yet. To use your own DeepSeek key, add a connection below.'));
+    return panel;
+  }
   const price = element('p', billingMoney(billing.prices.cached * 1e6) + ' cached input · ' +
     billingMoney(billing.prices.input * 1e6) + ' input · ' + billingMoney(billing.prices.output * 1e6) + ' output per 1M tokens');
   const keys = iconButton('key', 'Manage balance and API keys', 'button');
   keys.addEventListener('click', () => loadModule('keys'));
-  const panel = listPanel('Hosted models', [identity, price, keys]);
-  panel.classList.add('wide');
+  panel.append(price, keys);
   return panel;
 }
 
@@ -199,7 +205,7 @@ function renderModule(module, selectedTarget) {
   const inputField = () => field('input', 'Input JSON', 'textarea');
 
   if (module === 'models') {
-    const connect = iconButton('plus', 'Add model', 'button primary');
+    const connect = iconButton('plus', 'Add connection', 'button primary');
     connect.addEventListener('click', chooseModelProvider);
     heading.append(connect);
     if (billing) panels.push(hostedModelPanel());

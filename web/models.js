@@ -197,7 +197,7 @@ function modelsWorkspace() {
   const workspace = element('div', undefined, 'models-workspace wide');
   const connections = ofKind('model');
   const catalogue = element('section', undefined, 'model-catalogue');
-  catalogue.append(element('h2', connections.length ? 'Add another provider' : 'Choose a provider'), providerCards());
+  catalogue.append(element('h2', 'Use your own provider key'), providerCards());
   if (!connections.length) {
     workspace.append(catalogue);
     return workspace;
