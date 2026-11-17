@@ -14,6 +14,10 @@ const modules = {
 let activeModule;
 let records = [];
 let apiKeys = [];
+let billing;
+const billingMoney = nanos => new Intl.NumberFormat('en-US', {
+  style:'currency', currency:'USD', maximumFractionDigits:9
+}).format(nanos / 1e9);
 const registryFilters = {query:'', source:'', sort:'recent'};
 let lastStudioTarget;
 let refreshWorkspaceView;
@@ -33,8 +37,75 @@ async function keyRequest(path = '', data) {
   return result;
 }
 
+async function billingRequest(path = '', data) {
+  const response = await fetch('/api/billing' + path, data === undefined ? {cache:'no-store'} : {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)
+  });
+  if (!path && (response.status === 404 || response.status === 401)) return null;
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error ?? 'Billing request failed');
+  return result;
+}
+
+function traceLink(id) {
+  const link = element('a', 'View trace');
+  const url = new URL('/', location.origin);
+  url.searchParams.set('trace', id);
+  link.href = url.href;
+  return link;
+}
+
+function billingPanels() {
+  const balance = listPanel('Account balance', [element('strong', billingMoney(billing.balance_nanos))]);
+  if (billing.reserved_nanos) balance.append(element('p', billingMoney(billing.reserved_nanos) + ' reserved for active requests'));
+  const returned = new URL(location.href).searchParams.get('checkout');
+  if (returned === 'complete') balance.append(element('p', 'Balance updates when payment is confirmed. Refresh to check the ledger.'));
+  if (!billing.payments_available) balance.append(element('p', 'Top-ups are currently unavailable.'));
+  else {
+    const amounts = billing.topups.map(cents => [String(cents), billingMoney(cents * 1e7)]);
+    const topup = formPanel('Top up', [field('cents', 'Amount', amounts)], 'Continue to Stripe', async data => {
+      const result = await billingRequest('/checkout', {cents:Number(data.cents)});
+      location.assign(result.url);
+    });
+    balance.append(topup.querySelector('form'));
+  }
+  const activity = listPanel('Recent billing activity', billing.entries.map(entry => {
+    const item = element('div', undefined, 'billing-entry');
+    const key = apiKeys.find(key => key.id === entry.key_id);
+    item.append(
+      element('strong', key ? key.name + ' · ' + entry.model : 'Top-up'),
+      element('span', (entry.key_id ? '−' : '+') + billingMoney(Math.abs(entry.nanos))),
+      element('small', timeLabel(entry.at))
+    );
+    if (entry.key_id) item.append(element('small',
+      number.format(entry.input_tokens) + ' input (' + number.format(entry.cached_tokens) +
+      ' cached) · ' + number.format(entry.output_tokens) + ' output'), traceLink(entry.reference));
+    return item;
+  }));
+  activity.classList.add('wide');
+  return [balance, activity];
+}
+
+function hostedModelPanel() {
+  const identity = element('div', undefined, 'provider-identity');
+  identity.append(providerMark('deepseek'), element('strong', billing.model),
+    element('span', billing.model_available ? 'Available' : 'Unavailable', 'pill'));
+  const price = element('p', billingMoney(billing.prices.cached * 1e6) + ' cached input · ' +
+    billingMoney(billing.prices.input * 1e6) + ' input · ' + billingMoney(billing.prices.output * 1e6) + ' output per 1M tokens');
+  const keys = element('button', 'Manage balance and API keys', 'button');
+  keys.addEventListener('click', () => loadModule('keys'));
+  const panel = listPanel('Hosted models', [identity, price, keys]);
+  panel.classList.add('wide');
+  return panel;
+}
+
 const ofKind = kind => records.filter(record => record.kind === kind);
-const recordName = id => records.find(record => record.id === id)?.name ?? id;
+const hostedProvider = 'hosted:deepseek';
+const recordName = id => id === hostedProvider ? 'DeepSeek Flash · Hosted' : records.find(record => record.id === id)?.name ?? id;
+const studioModels = () => [
+  ...(billing?.model_available ? [[hostedProvider, recordName(hostedProvider)]] : []),
+  ...ofKind('model').map(model => [model.id, model.name])
+];
 const promptOptions = () => ofKind('prompt').map(record => {
   const history = ofKind('prompt').filter(item => item.name === record.name);
   return [record.id, record.name + ' · v' + (history.length - history.indexOf(record))];
@@ -129,14 +200,17 @@ function renderModule(module, selectedTarget) {
     const connect = element('button', '+ Add model', 'button primary');
     connect.addEventListener('click', chooseModelProvider);
     heading.append(connect);
+    if (billing) panels.push(hostedModelPanel());
     panels.push(modelsWorkspace());
   }
 
   if (module === 'keys') {
+    if (billing) panels.push(...billingPanels());
     const scopes = element('fieldset', undefined, 'key-scopes');
     scopes.append(element('legend', 'Permissions'));
     for (const [value, label] of [
-      ['traces:read','Read traces'], ['traces:write','Send traces'], ['agents:run','List and run agents']
+      ['traces:read','Read traces'], ['traces:write','Send traces'], ['agents:run','List and run agents'],
+      ...(billing ? [['models:invoke','Call hosted models']] : [])
     ]) {
       const option = element('input');
       option.type = 'checkbox';
@@ -164,6 +238,8 @@ function renderModule(module, selectedTarget) {
       const item = expandable(key.name + ' · ' + key.prefix + '… · ' + (key.revoked ? 'Revoked' : 'Active'), {
         permissions:key.scopes, created:key.created, last_used:key.last_used, revoked:key.revoked
       });
+      if (billing) item.querySelector('summary').after(element('p',
+        number.format(key.requests) + ' calls · ' + number.format(key.tokens) + ' tokens · ' + billingMoney(key.spend_nanos)));
       if (key.revoked) return item;
       const revoke = element('button', 'Revoke key', 'button');
       const result = element('p');
@@ -184,7 +260,8 @@ function renderModule(module, selectedTarget) {
     })));
     panels.push(listPanel('Use the API', [
       element('p', 'Send an Authorization: Bearer header with your workspace API key.'),
-      element('pre', 'GET /api/agents\nPOST /api/platform/runs\nGET /api/traces\nPOST /api/traces')
+      element('pre', (billing ? 'POST /v1/chat/completions\n' : '') +
+        'GET /api/agents\nPOST /api/platform/runs\nGET /api/traces\nPOST /api/traces')
     ]));
   }
 
@@ -280,18 +357,18 @@ async function openCreateAgent() {
   buttons.append(studio, external);
   const studioBody = element('div');
   const externalBody = element('div');
-  const models = ofKind('model');
+  const models = studioModels();
   if (models.length) {
     const form = formPanel('Agent configuration', [
       field('name', 'Name'),
-      field('provider', 'Model', models.map(model => [model.id, model.name])),
+      field('provider', 'Model', models),
       field('instructions', 'Agent instructions', 'textarea')
     ], 'Create agent', async data => {
       const agent = await platformRequest('/agents', {...data, source:'studio'});
       byId('modal').close();
       await loadModule('studio', agent.id);
     });
-    if (models.length === 1) form.querySelector('select').value = models[0].id;
+    if (models.length === 1) form.querySelector('select').value = models[0][0];
     studioBody.append(form);
   } else {
     const connect = element('button', 'Connect a model', 'button primary module-result');
@@ -341,8 +418,9 @@ function agentSettings(agent, returnTo = 'agents') {
       controls.append(keys);
     }
   }
-  if (!isExternal && location.protocol === 'https:' && ofKind('model').length) {
-    const provider = field('provider', 'Model', ofKind('model').map(model => [model.id, model.name]));
+  const models = studioModels();
+  if (!isExternal && location.protocol === 'https:' && models.length) {
+    const provider = field('provider', 'Model', models);
     provider.querySelector('select').value = agent.provider ?? '';
     content.append(formPanel('Change model', [provider], 'Save model', async data => {
       await platformRequest('/agent-model', {...data, agent:agent.id});
@@ -384,6 +462,13 @@ function studioWorkspace(targets, selectedTarget) {
   const session = element('div', undefined, 'studio-stream');
   session.setAttribute('aria-live', 'polite');
   const form = element('form', undefined, 'studio-composer');
+  const availableKeys = apiKeys.filter(key => !key.revoked && key.scopes.includes('models:invoke'));
+  const billingField = field('billing_key', 'Charge to API key', availableKeys.map(key => [key.id, key.name]));
+  const billingInput = billingField.querySelector('select');
+  if (availableKeys.length === 1) billingInput.value = availableKeys[0].id;
+  const manageKeys = element('button', 'Manage balance and API keys', 'button');
+  manageKeys.type = 'button';
+  manageKeys.addEventListener('click', () => loadModule('keys'));
   const message = element('textarea');
   message.rows = 2;
   message.required = true;
@@ -393,8 +478,8 @@ function studioWorkspace(targets, selectedTarget) {
   const send = element('button', 'Run', 'button primary');
   const hint = element('p', 'Each run is independent.');
   const formFooter = element('div', undefined, 'composer-footer');
-  formFooter.append(hint, send);
-  form.append(messageLabel, message, formFooter);
+  formFooter.append(hint, manageKeys, send);
+  form.append(messageLabel, message, billingField, formFooter);
   stage.append(session, form);
   split.append(history, stage);
   panel.append(toolbar, split);
@@ -408,6 +493,12 @@ function studioWorkspace(targets, selectedTarget) {
     const target = current();
     lastStudioTarget = target.id;
     model.textContent = target.provider ? recordName(target.provider) : target.kind === 'deployment' ? 'Deployment' : 'Workspace default';
+    const hosted = target.provider === hostedProvider;
+    billingField.hidden = !hosted;
+    billingInput.disabled = !hosted;
+    manageKeys.hidden = !hosted;
+    hint.textContent = hosted ? 'Charges use your account balance.' : 'Each run is independent.';
+    send.disabled = hosted && !availableKeys.length;
     configure.hidden = target.kind === 'deployment';
     if (reset) {
       selectedRun = undefined;
@@ -514,7 +605,8 @@ function studioWorkspace(targets, selectedTarget) {
     draw();
     const submitted = message.value;
     try {
-      const trace = await platformRequest('/runs', {target:target.id, target_kind:target.kind, input});
+      const trace = await platformRequest('/runs', {target:target.id, target_kind:target.kind, input,
+        ...(target.provider === hostedProvider ? {billing_key:billingInput.value} : {})});
       selectedRun = requestTrace = trace;
       if (message.value === submitted) message.value = '';
       refresh();
@@ -677,11 +769,14 @@ async function loadModule(module, selectedTarget) {
   });
   try {
     if (module === 'feedback') await refresh();
-    if (module === 'keys') {
-      const next = await keyRequest();
+    if (['keys','models','agents','studio'].includes(module)) {
+      const nextBilling = await billingRequest();
+      const nextKeys = module === 'keys' || (module === 'studio' && nextBilling) ? await keyRequest() : null;
       if (activeModule !== module || platformContent.hidden) return;
-      apiKeys = next;
-    } else {
+      billing = nextBilling;
+      if (nextKeys) apiKeys = nextKeys;
+    }
+    if (module !== 'keys') {
       const next = await platformRequest();
       if (activeModule !== module || platformContent.hidden) return;
       records = next;

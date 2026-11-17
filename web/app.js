@@ -67,6 +67,7 @@ function showTrace(trace, linked = false) {
   metadata.append(statusPill(runStatus(trace)), element('span', latency(trace.duration), 'pill'),
     element('span', number.format(trace.tokens) + ' tokens', 'pill'));
   if (trace.environment) metadata.append(element('span', trace.environment, 'pill'));
+  if (typeof trace.cost_nanos === 'number') metadata.append(element('span', billingMoney(trace.cost_nanos), 'pill'));
 
   const summary = element('div', undefined, 'inspector-summary');
   const identity = element('div');
@@ -120,6 +121,9 @@ function showTrace(trace, linked = false) {
         ['ID', run.id ?? '—']
       ];
       if (run.model) items.splice(1, 0, ['Model', run.model]);
+      if (run.key_id && typeof run.cost_nanos === 'number') {
+        items.push(['API Key ID', run.key_id], ['Charge', billingMoney(run.cost_nanos)]);
+      }
       for (const [key, value] of items) details.append(element('dt', key), element('dd', value));
       content.replaceChildren(details);
     } else {
@@ -263,7 +267,7 @@ function render() {
     const open = element('button', trace.name, 'trace');
     open.addEventListener('click', () => showTrace(trace));
     const values = [open, traceScope(trace), trace.environment ?? '—', element('span', trace.status, 'pill ' + trace.status),
-      latency(trace.duration), number.format(trace.tokens), money(trace.cost),
+      latency(trace.duration), number.format(trace.tokens), typeof trace.cost_nanos === 'number' ? billingMoney(trace.cost_nanos) : money(trace.cost),
       new Date(trace.at).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})];
     for (const value of values) {
       const cell = element('td');

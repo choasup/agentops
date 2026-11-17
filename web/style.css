@@ -476,3 +476,7 @@ dialog::backdrop {background: #111a3a70}
   .model-library .provider-mark {width:28px; height:28px}
   .model-row-identity p {max-width:15ch}
 }
+
+.billing-entry {display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px 16px; padding:12px 0; border-top:1px solid #e8ebf1}
+.billing-entry small {color:var(--muted)}
+.billing-entry a {justify-self:start}

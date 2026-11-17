@@ -30,7 +30,7 @@ curl -X POST http://127.0.0.1:8765/api/traces \
 
 可以设置 `TRACE_STUDIO_MODEL` 和 `TRACE_STUDIO_MODEL_URL`，让 Playground、Experiments 和 Studio 使用 OpenAI 兼容的 Chat Completions 服务。URL 须包含完整端点路径，若服务需要认证则同时设置 `TRACE_STUDIO_MODEL_KEY`。实验会逐条调用模型，Studio 会记录服务返回的 token 用量。
 
-Studio Agent 和部署目标均由本地服务执行。云端构建、扩缩容、托管 Agent、工作流调度、在线评估、自动洞察、权限和计费尚未实现。
+本节描述 Python 本地版本。Cloudflare 部署另提供邮箱登录、API Key 和托管模型计费。
 
 Agent 的环境可选 `local`、`development`、`staging`、`production`。Agent 页面会生成带 identifier 的上报示例，Dashboards 和 Traces 支持按环境筛选。
 
@@ -38,7 +38,7 @@ Agent 的环境可选 `local`、`development`、`staging`、`production`。Agent
 
 主站为 [agentdeck.cloudmoro.com](https://agentdeck.cloudmoro.com/)。旧站 agentops.cloudmoro.com 返回 308 并保留路径和查询参数。API 客户端请直接使用新域名。
 
-Worker 在 `agentops.cloudmoro.com` 提供页面和 API。数据保存在 Cloudflare 的 SQLite Durable Object，初次部署从空工作区开始。
+Worker 在主站提供页面和 API。数据保存在 Cloudflare 的 SQLite Durable Object，初次部署从空工作区开始。
 
 ```sh
 npx wrangler deploy
@@ -70,6 +70,7 @@ Cloudflare Workers AI 测试连接使用独立的私有 Worker。新账号部署
 | Read traces | `GET /api/traces` |
 | Send traces | `POST /api/traces` |
 | List and run agents | `GET /api/agents`、`POST /api/platform/runs` |
+| Call hosted models | `POST /v1/chat/completions`；调用托管 Studio Agent 还需要 List and run agents |
 
 ```sh
 curl -H "Authorization: Bearer $AGENTOPS_API_KEY" https://agentdeck.cloudmoro.com/api/agents
@@ -78,6 +79,21 @@ curl -H "Authorization: Bearer $AGENTOPS_API_KEY" \
   -d '{"target_kind":"agent","target":"<GET /api/agents 返回的 id>","input":"你好"}' \
   https://agentdeck.cloudmoro.com/api/platform/runs
 ```
+
+### DeepSeek 托管 API
+
+通过 `npx wrangler secret put DEEPSEEK_API_KEY` 为 Worker 配置平台的 DeepSeek 密钥。用户创建带 **Call hosted models** 权限的 Agent Deck Key，可在 Studio 中选择该 Key 结算，或直接调用：
+
+```sh
+curl https://agentdeck.cloudmoro.com/v1/chat/completions \
+  -H "Authorization: Bearer $AGENTOPS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"deepseek-flash","messages":[{"role":"user","content":"Say hello"}],"max_tokens":32}'
+```
+
+首版支持非流式文本调用。账号余额以美元计，按实际缓存输入、普通输入和输出 Token 分别计价，固定为每百万 Token USD 0.006、0.30 和 1.20。余额、账单及各 Key 的调用汇总在 **API Keys** 查看。响应中的 `agent_deck.trace_id` 对应同一笔扣费和 Trace，`cost_nanos` 的单位是十亿分之一美元。
+
+充值使用 Stripe Checkout。为 Worker 配置 `STRIPE_SECRET_KEY` 和 `STRIPE_WEBHOOK_SECRET`，将 Stripe 的 `checkout.session.completed` 发往 `https://agentdeck.cloudmoro.com/api/billing/stripe`。到账以通过签名验证的已支付事件为准。只在独立测试工作区和独立存储环境使用 `BILLING_TEST_MODE=true` 与 Stripe 测试密钥。当前余额账本记录充值和模型消费，退款与拒付需人工对账。
 
 ## 手机号、短信和账号
 

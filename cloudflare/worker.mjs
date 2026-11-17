@@ -1,9 +1,11 @@
 import { DurableObject } from 'cloudflare:workers';
+import { Billing, BillingError, checkout, hostedModel, hostedProviderId, paymentWebhook } from './billing.mjs';
 import { cookie, cookieValue, emailConfigured, json, randomId as id, sessionCookie, sha256,
   smsConfigured, workspaceCookie, workspacePattern } from './accounts.mjs';
 export { Accounts } from './accounts.mjs';
 
 const environments = ['local', 'development', 'staging', 'production'];
+const chatPath = '/v1/chat/completions';
 class InputError extends Error {}
 
 function publicRecord(record) {
@@ -44,6 +46,7 @@ async function unseal(token, secret, purpose) {
 }
 
 function allowedScope(path, method) {
+  if (path === chatPath && method === 'POST') return 'models:invoke';
   if (path === '/api/traces' && method === 'GET') return 'traces:read';
   if (path === '/api/traces' && method === 'POST') return 'traces:write';
   if (path === '/api/platform/runs' && method === 'POST') return 'agents:run';
@@ -58,10 +61,11 @@ export default {
       return Response.redirect('https://agentdeck.cloudmoro.com' + pathname + search, 308);
     }
     if (pathname === '/healthz' && request.method === 'GET') return json({status:'ok'});
+    if (pathname === '/api/billing/stripe' && request.method === 'POST') return paymentWebhook(request, env);
 
     const guest = cookieValue(request, workspaceCookie);
     const session = cookieValue(request, sessionCookie);
-    if (!pathname.startsWith('/api/')) {
+    if (!pathname.startsWith('/api/') && pathname !== chatPath) {
       const response = await env.ASSETS.fetch(request);
       if (pathname !== '/' || request.method !== 'GET' || !response.ok) return response;
       const page = new Response(response.body, response);
@@ -122,7 +126,7 @@ export default {
         if (!allowedScope(pathname, request.method)) return json({error:'API key cannot use this endpoint'}, 403);
         const workspace = await unseal(token.slice(5), secret, 'agentops-api');
         if (workspacePattern.test(workspace ?? '')) {
-          if (env.REQUIRE_LOGIN === 'true' && !await isClaimed(workspace)) {
+          if ((pathname === chatPath || env.REQUIRE_LOGIN === 'true') && !await isClaimed(workspace)) {
             return json({error:'Sign in to activate this workspace key'}, 403);
           }
           return env.WORKSPACE.getByName('browser:' + workspace).fetch(request);
@@ -136,7 +140,9 @@ export default {
       return json({error:'Invalid API credential'}, 401);
     }
 
+    if (pathname === chatPath) return json({error:'Supply an Agent Deck API key'}, 401);
     const {user, workspace:accountWorkspace, claimed} = await (await accountRequest('resolve')).json();
+    if (pathname.startsWith('/api/billing') && !user) return json({error:'Please sign in to continue'}, 401);
     if (!user && (env.REQUIRE_LOGIN === 'true' || claimed)) return json({error:'Please sign in to continue'}, 401);
     const workspace = accountWorkspace ?? guest;
     if (!workspacePattern.test(workspace ?? '')) return json({error:'请打开 Agent Deck 以初始化工作区'}, 401);
@@ -158,6 +164,7 @@ export class Workspace extends DurableObject {
     this.sql.exec('CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, kind TEXT, payload TEXT)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS traces (payload TEXT NOT NULL)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, digest TEXT NOT NULL UNIQUE, name TEXT NOT NULL, prefix TEXT NOT NULL, scopes TEXT NOT NULL, created TEXT NOT NULL, last_used TEXT, revoked TEXT)');
+    this.billing = new Billing(ctx.storage, env);
   }
 
   rows(table) {
@@ -175,7 +182,7 @@ export class Workspace extends DurableObject {
     const name = requiredText(data, 'name');
     if (name.length > 80) throw new InputError('Use a name of up to 80 characters');
     if (!Array.isArray(data.scopes) || !data.scopes.length ||
-        data.scopes.some(scope => !['traces:read','traces:write','agents:run'].includes(scope))) {
+        data.scopes.some(scope => !['traces:read','traces:write','agents:run','models:invoke'].includes(scope))) {
       throw new InputError('Choose at least one valid scope');
     }
     if (!this.env.AGENTOPS_INGEST_TOKEN || !workspacePattern.test(workspace ?? '')) {
@@ -192,11 +199,11 @@ export class Workspace extends DurableObject {
 
   async checkApiKey(token, scope) {
     const digest = await sha256(token);
-    const key = this.sql.exec('SELECT scopes FROM api_keys WHERE digest=? AND revoked IS NULL', digest).toArray()[0];
+    const key = this.sql.exec('SELECT id,scopes FROM api_keys WHERE digest=? AND revoked IS NULL', digest).toArray()[0];
     if (!key) return json({error:'API key is invalid or revoked'}, 401);
     if (!JSON.parse(key.scopes).includes(scope)) return json({error:'API key is missing the required permission'}, 403);
     this.sql.exec('UPDATE api_keys SET last_used=? WHERE digest=?', new Date().toISOString(), digest);
-    return null;
+    return key.id;
   }
 
   saveTrace(fields) {
@@ -360,7 +367,8 @@ export class Workspace extends DurableObject {
       const agent = {name, source, identifier:slug + '-' + id().slice(0, 12)};
       if (source === 'studio') {
         agent.instructions = requiredText(data, 'instructions');
-        if (data.provider) agent.provider = find('provider', 'model').id;
+        if (data.provider === hostedProviderId && this.env.DEEPSEEK_API_KEY) agent.provider = hostedProviderId;
+        else if (data.provider) agent.provider = find('provider', 'model').id;
         else if (!this.env.TRACE_STUDIO_MODEL) throw new InputError('Choose a model before creating the agent');
       }
       return this.save('agent', agent);
@@ -368,7 +376,9 @@ export class Workspace extends DurableObject {
     if (action === 'agent-model') {
       const agent = find('agent', 'agent');
       if (agent.source === 'external') throw new InputError('External agents do not use a Studio model');
-      const updated = {...agent, provider:find('provider', 'model').id};
+      const provider = data.provider === hostedProviderId && this.env.DEEPSEEK_API_KEY
+        ? hostedProviderId : find('provider', 'model').id;
+      const updated = {...agent, provider};
       this.sql.exec('UPDATE records SET payload=? WHERE id=?', JSON.stringify(updated), agent.id);
       return updated;
     }
@@ -405,6 +415,12 @@ export class Workspace extends DurableObject {
       if (!['agent', 'deployment'].includes(kind)) throw new InputError('Invalid target kind');
       const target = find('target', kind);
       if (target.source === 'external') throw new InputError('External agents run in your application');
+      if (target.provider === hostedProviderId) {
+        if (typeof data.input !== 'string' || !data.input.trim()) throw new InputError('Enter a test message');
+        return this.billing.complete({model:hostedModel, messages:[
+          {role:'system', content:target.instructions}, {role:'user', content:data.input}
+        ]}, this.billableKey(data.billing_key), target);
+      }
       const prompt = records.find(item => item.id === target.prompt);
       const provider = records.find(item => item.kind === 'model' && item.id === target.provider);
       const model = provider?.model ?? this.env.TRACE_STUDIO_MODEL;
@@ -432,20 +448,38 @@ export class Workspace extends DurableObject {
     throw new InputError('Unknown action');
   }
 
+  billableKey(id) {
+    const key = this.sql.exec('SELECT scopes FROM api_keys WHERE id=? AND revoked IS NULL', typeof id === 'string' ? id : '').toArray()[0];
+    if (!key || !JSON.parse(key.scopes).includes('models:invoke')) throw new BillingError('Choose an active key with hosted model access', 403);
+    return id;
+  }
+
   async fetch(request) {
-    const {pathname} = new URL(request.url);
+    const {hostname, pathname, origin} = new URL(request.url);
+    if (hostname === 'billing.internal' && pathname === '/stripe-credit' && request.method === 'POST') {
+      const {reference, cents} = await request.json();
+      this.billing.credit(reference, cents);
+      return json({ok:true});
+    }
     const bearer = request.headers.get('Authorization') ?? '';
+    let keyId;
     if (bearer.startsWith('Bearer aops_')) {
       const scope = allowedScope(pathname, request.method);
       if (!scope) return json({error:'API key cannot use this endpoint'}, 403);
-      const problem = await this.checkApiKey(bearer.slice(7), scope);
-      if (problem) return problem;
+      const result = await this.checkApiKey(bearer.slice(7), scope);
+      if (result instanceof Response) return result;
+      keyId = result;
     }
     if (request.method === 'GET') {
       if (pathname === '/api/keys') {
-        const keys = this.sql.exec('SELECT id,name,prefix,scopes,created,last_used,revoked FROM api_keys ORDER BY created DESC').toArray();
+        const keys = this.sql.exec(`SELECT k.id,k.name,k.prefix,k.scopes,k.created,k.last_used,k.revoked,
+          COALESCE(usage.requests,0) AS requests, COALESCE(usage.tokens,0) AS tokens, COALESCE(usage.spend_nanos,0) AS spend_nanos
+          FROM api_keys k LEFT JOIN (SELECT key_id, COUNT(*) AS requests, SUM(input_tokens+output_tokens) AS tokens,
+          -SUM(nanos) AS spend_nanos FROM billing_ledger WHERE key_id IS NOT NULL GROUP BY key_id) usage
+          ON usage.key_id=k.id ORDER BY k.created DESC`).toArray();
         return json(keys.map(key => ({...key, scopes:JSON.parse(key.scopes)})));
       }
+      if (pathname === '/api/billing') return json(this.billing.summary());
       if (pathname === '/api/agents') return json(this.rows('records').filter(record => record.kind === 'agent').map(
         ({id, identifier, name, source}) => ({id, identifier, name, source})
       ));
@@ -471,6 +505,13 @@ export class Workspace extends DurableObject {
         }
         const data = JSON.parse(body + decoder.decode());
         if (!data || Array.isArray(data) || typeof data !== 'object') throw new InputError('Expected a JSON object');
+        if (pathname === chatPath) {
+          if (!keyId) return json({error:'Supply an Agent Deck API key'}, 401);
+          return json(await this.billing.complete(data, this.billableKey(keyId)));
+        }
+        if (pathname === '/api/billing/checkout') {
+          return json(await checkout(this.env, request.headers.get('X-AgentOps-Workspace'), data.cents, origin), 201);
+        }
         if (pathname === '/api/keys') return json(await this.createApiKey(data, request.headers.get('X-AgentOps-Workspace')), 201);
         if (pathname === '/api/keys/revoke') {
           const key = requiredText(data, 'id');
@@ -480,8 +521,15 @@ export class Workspace extends DurableObject {
           return json({ok:true});
         }
         if (pathname === '/api/traces') return json(this.ingest(data), 201);
-        if (pathname.startsWith('/api/platform/')) return json(await this.action(pathname.slice(14), data), 201);
+        if (pathname.startsWith('/api/platform/')) {
+          if (keyId && pathname === '/api/platform/runs') {
+            if (data.billing_key && data.billing_key !== keyId) return json({error:'Use the calling key for billing'}, 403);
+            data.billing_key = keyId;
+          }
+          return json(await this.action(pathname.slice(14), data), 201);
+        }
       } catch (error) {
+        if (error instanceof BillingError) return json({error:error.message}, error.status);
         if (error instanceof InputError || error instanceof SyntaxError) return json({error:error.message}, 400);
         console.error('Workspace request failed', error.name);
         return json({error:'Workspace request failed'}, 500);
