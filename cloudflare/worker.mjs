@@ -169,12 +169,14 @@ export class Workspace extends DurableObject {
     const headers = {'Content-Type':'application/json'};
     const apiKey = provider ? provider.api_key : this.env.TRACE_STUDIO_MODEL_KEY;
     if (apiKey) headers.Authorization = 'Bearer ' + apiKey;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
     try {
+      const adapter = endpoint === this.env.MODEL_ADAPTER_URL ? this.env.MODEL_ADAPTER : null;
       const request = new Request(endpoint, {
         method:'POST', headers, body:JSON.stringify({model, messages}),
-        signal:AbortSignal.timeout(30000), redirect:'manual'
+        ...(adapter ? {} : {signal:controller.signal}), redirect:'manual'
       });
-      const adapter = endpoint === this.env.MODEL_ADAPTER_URL ? this.env.MODEL_ADAPTER : null;
       const response = await (adapter ? adapter.fetch(request) : fetch(request));
       if (!response.ok) throw new InputError('Model service returned HTTP ' + response.status);
       const result = await response.json();
@@ -183,7 +185,10 @@ export class Workspace extends DurableObject {
       return {output, tokens:result.usage?.total_tokens ?? 0};
     } catch (error) {
       if (error instanceof InputError) throw error;
+      console.error('Model request failed', error.name);
       throw new InputError('Could not read a response from the model service');
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
