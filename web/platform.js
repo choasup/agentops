@@ -1,5 +1,6 @@
 const platformContent = byId('platform-content');
 const modules = {
+  keys: ['API Keys', 'Create scoped credentials for applications using this workspace.'],
   models: ['Models', 'Connect and test an OpenAI-compatible model for your agents.'],
   datasets: ['Datasets', 'Curate examples and reference outputs for evaluation.'],
   experiments: ['Experiments', 'Evaluate prompt versions against a dataset and compare scores.'],
@@ -12,6 +13,48 @@ const modules = {
 };
 let activeModule;
 let records = [];
+let apiKeys = [];
+
+const providerPresets = {
+  deepseek: {label:'DeepSeek', url:'https://api.deepseek.com/chat/completions', model:'deepseek-v4-flash'},
+  bailian: {label:'Alibaba Cloud Bailian · 北京', url:'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model:'qwen-plus'},
+  custom: {label:'Custom · OpenAI compatible', url:'', model:''}
+};
+
+async function keyRequest(path = '', data) {
+  const response = await fetch('/api/keys' + path, data === undefined ? {cache:'no-store'} : {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error ?? 'API key request failed');
+  return result;
+}
+
+function modelForm(existing, onSave) {
+  const vendor = field('vendor', 'Provider', Object.entries(providerPresets).map(([key, preset]) => [key, preset.label]));
+  const select = vendor.querySelector('select');
+  select.value = existing?.vendor ?? 'custom';
+  const name = field('name', 'Name', 'text', existing?.name ?? '');
+  const url = field('url', 'Chat Completions URL', 'url', existing?.url ?? '');
+  const model = field('model', 'Model ID', 'text', existing?.model ?? '');
+  const key = field('api_key', existing?.has_api_key ? 'API key (leave blank to keep current key)' : 'Provider API key', 'password');
+  const nameInput = name.querySelector('input');
+  const urlInput = url.querySelector('input');
+  const modelInput = model.querySelector('input');
+  const keyInput = key.querySelector('input');
+  urlInput.placeholder = 'https://api.example.com/v1/chat/completions';
+  keyInput.autocomplete = 'off';
+  keyInput.required = !existing?.has_api_key && select.value !== 'custom';
+  select.addEventListener('change', () => {
+    const preset = providerPresets[select.value];
+    urlInput.value = preset?.url ?? '';
+    modelInput.value = preset?.model ?? '';
+    if (!nameInput.value) nameInput.value = preset?.label ?? '';
+    keyInput.required = !existing?.has_api_key && select.value !== 'custom';
+  });
+  return formPanel(existing ? 'Edit model connection' : 'Connect a model',
+    [vendor, name, url, model, key], 'Save model', onSave);
+}
 
 const ofKind = kind => records.filter(record => record.kind === kind);
 const recordName = id => records.find(record => record.id === id)?.name ?? id;
@@ -103,15 +146,7 @@ function renderModule(module, selectedTarget) {
   const inputField = () => field('input', 'Input JSON', 'textarea', '{"input":"Hello"}');
 
   if (module === 'models') {
-    const keyField = field('api_key', 'API key (optional)', 'password');
-    const keyInput = keyField.querySelector('input');
-    keyInput.required = false;
-    keyInput.autocomplete = 'off';
-    const urlField = field('url', 'Chat Completions URL', 'url');
-    urlField.querySelector('input').placeholder = 'https://api.example.com/v1/chat/completions';
-    panels.push(formPanel('Connect a model', [
-      nameField(), urlField, field('model', 'Model ID'), keyField
-    ], 'Save model', data => create(module, data)));
+    panels.push(modelForm(null, data => create(module, data)));
     if (ofKind('model').length) {
       panels.push(formPanel('Test connection', [
         field('provider', 'Model', options('model')), field('message', 'Message', 'textarea', 'Reply with OK.')
@@ -121,10 +156,95 @@ function renderModule(module, selectedTarget) {
         section.append(element('pre', result.output, 'module-result'));
       }));
     }
-    panels.push(listPanel('Connected models', ofKind('model').map(record =>
-      expandable(record.name + ' · ' + record.model, {
+    panels.push(listPanel('Connected models', ofKind('model').map(record => {
+      const item = expandable(record.name + ' · ' + record.model, {
+        provider:providerPresets[record.vendor ?? 'custom']?.label,
         endpoint:record.url, credential:record.has_api_key ? 'API key saved' : 'No API key'
-      }))));
+      });
+      if (location.protocol !== 'https:') return item;
+      const actions = element('div', undefined, 'model-actions');
+      const edit = element('button', 'Edit', 'button');
+      edit.addEventListener('click', () => openModal(record.name, [
+        modelForm(record, async data => {
+          await platformRequest('/models-update', {...data, provider:record.id});
+          byId('modal').close();
+          await loadModule('models');
+        })
+      ]));
+      const remove = element('button', 'Remove', 'button');
+      const result = element('p');
+      result.setAttribute('role', 'status');
+      remove.addEventListener('click', async () => {
+        if (!window.confirm('Remove the model connection “' + record.name + '”?')) return;
+        remove.disabled = true;
+        try {
+          await platformRequest('/models-delete', {provider:record.id});
+          await loadModule('models');
+        } catch (error) {
+          result.textContent = error.message;
+          remove.disabled = false;
+        }
+      });
+      actions.append(edit, remove);
+      item.append(actions, result);
+      return item;
+    })));
+  }
+
+  if (module === 'keys') {
+    const scopes = element('fieldset', undefined, 'key-scopes');
+    scopes.append(element('legend', 'Permissions'));
+    for (const [value, label] of [
+      ['traces:read','Read traces'], ['traces:write','Send traces'], ['agents:run','List and run agents']
+    ]) {
+      const option = element('input');
+      option.type = 'checkbox';
+      option.value = value;
+      const wrapper = element('label');
+      wrapper.append(option, document.createTextNode(label));
+      scopes.append(wrapper);
+    }
+    panels.push(formPanel('Create API key', [nameField(), scopes], 'Generate key', async data => {
+      const requested = Array.from(scopes.querySelectorAll('input:checked'), input => input.value);
+      const key = await keyRequest('', {name:data.name, scopes:requested});
+      if (activeModule !== 'keys' || platformContent.hidden) return;
+      await loadModule('keys');
+      const value = element('pre', key.token);
+      const copy = element('button', 'Copy API key', 'button primary');
+      copy.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(key.token); copy.textContent = 'Copied'; }
+        catch { copy.textContent = 'Select and copy the key above'; }
+      });
+      openModal('API key created', [
+        element('p', 'Copy this key now. It is displayed once.'), value, copy
+      ]);
+    }));
+    panels.push(listPanel('Workspace keys', apiKeys.map(key => {
+      const item = expandable(key.name + ' · ' + key.prefix + '… · ' + (key.revoked ? 'Revoked' : 'Active'), {
+        permissions:key.scopes, created:key.created, last_used:key.last_used, revoked:key.revoked
+      });
+      if (key.revoked) return item;
+      const revoke = element('button', 'Revoke key', 'button');
+      const result = element('p');
+      result.setAttribute('role', 'status');
+      revoke.addEventListener('click', async () => {
+        if (!window.confirm('Revoke “' + key.name + '”? Applications using it will lose access.')) return;
+        revoke.disabled = true;
+        try {
+          await keyRequest('/revoke', {id:key.id});
+          await loadModule('keys');
+        } catch (error) {
+          result.textContent = error.message;
+          revoke.disabled = false;
+        }
+      });
+      item.append(revoke, result);
+      return item;
+    })));
+    panels.push(listPanel('Use the API', [
+      element('p', 'Send an Authorization: Bearer header with your AgentOps key.'),
+      element('pre', 'GET /api/agents\nPOST /api/platform/runs\nGET /api/traces\nPOST /api/traces')
+    ]));
   }
 
   if (module === 'datasets') {
@@ -223,30 +343,28 @@ function renderModule(module, selectedTarget) {
         };
         item.append(element('p', 'POST /api/traces'), element('pre', JSON.stringify(example, null, 2)));
         if (location.protocol === 'https:') {
-          const reveal = element('button', 'Show ingestion token', 'button');
-          const token = element('pre');
-          token.hidden = true;
-          reveal.addEventListener('click', async () => {
-            reveal.disabled = true;
-            try {
-              const response = await fetch('/api/workspace', {cache:'no-store'});
-              const config = await response.json();
-              if (!response.ok) throw new Error(config.error);
-              token.textContent = 'Authorization: Bearer ' + config.ingest_token;
-            } catch (error) {
-              token.textContent = error.message;
-            } finally {
-              token.hidden = false;
-              reveal.disabled = false;
-            }
-          });
-          item.append(reveal, token);
+          const keys = element('button', 'Open API Keys', 'button');
+          keys.addEventListener('click', () => loadModule('keys'));
+          item.append(keys);
         }
       }
       if (agent.source !== 'external') {
         const open = element('button', 'Open in Studio', 'button');
         open.addEventListener('click', () => loadModule('studio', agent.id));
         item.append(open);
+        if (location.protocol === 'https:' && ofKind('model').length) {
+          const change = element('button', 'Change model', 'button');
+          change.addEventListener('click', () => {
+            const select = field('provider', 'Model', options('model'));
+            select.querySelector('select').value = agent.provider ?? '';
+            openModal(agent.name, [formPanel('Change model', [select], 'Save model', async data => {
+              await platformRequest('/agent-model', {...data, agent:agent.id});
+              byId('modal').close();
+              await loadModule('agents');
+            })]);
+          });
+          item.append(change);
+        }
       }
       return item;
     }));
@@ -290,9 +408,15 @@ async function loadModule(module, selectedTarget) {
     else button.removeAttribute('aria-current');
   });
   try {
-    const next = await platformRequest();
-    if (activeModule !== module || platformContent.hidden) return;
-    records = next;
+    if (module === 'keys') {
+      const next = await keyRequest();
+      if (activeModule !== module || platformContent.hidden) return;
+      apiKeys = next;
+    } else {
+      const next = await platformRequest();
+      if (activeModule !== module || platformContent.hidden) return;
+      records = next;
+    }
     renderModule(module, selectedTarget);
   } catch (error) {
     if (activeModule === module) platformContent.replaceChildren(element('p', error.message));

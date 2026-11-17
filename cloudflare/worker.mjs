@@ -1,15 +1,14 @@
 import { DurableObject } from 'cloudflare:workers';
+import { cookie, cookieValue, json, randomId as id, sessionCookie, sha256,
+  smsConfigured, workspaceCookie, workspacePattern } from './accounts.mjs';
+export { Accounts } from './accounts.mjs';
 
 const environments = ['local', 'development', 'staging', 'production'];
-const noStore = {'Cache-Control': 'no-store'};
-const json = (body, status = 200) => Response.json(body, {status, headers: noStore});
-const id = () => crypto.randomUUID().replaceAll('-', '');
-
 class InputError extends Error {}
 
 function publicRecord(record) {
-  const {api_key, ...visible} = record;
-  return record.kind === 'model' ? {...visible, has_api_key:Boolean(api_key)} : visible;
+  const {api_key, encrypted_key, ...visible} = record;
+  return record.kind === 'model' ? {...visible, has_api_key:Boolean(api_key || encrypted_key)} : visible;
 }
 
 function requiredText(data, key) {
@@ -18,39 +17,38 @@ function requiredText(data, key) {
   return value.trim();
 }
 
-const workspaceCookie = '__Host-agentops-workspace';
-const workspacePattern = /^[0-9a-f]{32}$/;
-
-function workspaceFrom(request) {
-  const cookies = request.headers.get('Cookie') ?? '';
-  return cookies.split(';').map(cookie => cookie.trim()).find(cookie =>
-    cookie.startsWith(workspaceCookie + '='))?.slice(workspaceCookie.length + 1);
-}
-
-async function ingestionKey(secret) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('agentops-ingest:' + secret));
+async function encryptionKey(secret, purpose) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(purpose + ':' + secret));
   return crypto.subtle.importKey('raw', digest, 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 
-async function ingestionToken(workspace, secret) {
+async function seal(value, secret, purpose) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const payload = await crypto.subtle.encrypt({name:'AES-GCM', iv}, await ingestionKey(secret),
-    new TextEncoder().encode(workspace));
-  return btoa(String.fromCharCode(...iv, ...new Uint8Array(payload)))
-    .replaceAll('+', '-').replaceAll('/', '_');
+  const payload = new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM', iv},
+    await encryptionKey(secret, purpose), new TextEncoder().encode(value)));
+  let binary = String.fromCharCode(...iv);
+  for (const byte of payload) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_');
 }
 
-async function ingestionWorkspace(token, secret) {
-  if (!secret || !/^[a-zA-Z0-9_-]{80}$/.test(token)) return null;
+async function unseal(token, secret, purpose) {
   try {
     const bytes = Uint8Array.from(atob(token.replaceAll('-', '+').replaceAll('_', '/')),
       char => char.charCodeAt(0));
     const payload = await crypto.subtle.decrypt({name:'AES-GCM', iv:bytes.slice(0, 12)},
-      await ingestionKey(secret), bytes.slice(12));
+      await encryptionKey(secret, purpose), bytes.slice(12));
     return new TextDecoder().decode(payload);
   } catch {
     return null;
   }
+}
+
+function allowedScope(path, method) {
+  if (path === '/api/traces' && method === 'GET') return 'traces:read';
+  if (path === '/api/traces' && method === 'POST') return 'traces:write';
+  if (path === '/api/platform/runs' && method === 'POST') return 'agents:run';
+  if (path === '/api/agents' && method === 'GET') return 'agents:run';
+  return null;
 }
 
 export default {
@@ -58,44 +56,88 @@ export default {
     const {pathname, origin} = new URL(request.url);
     if (pathname === '/healthz' && request.method === 'GET') return json({status:'ok'});
 
-    let workspace = workspaceFrom(request);
+    const guest = cookieValue(request, workspaceCookie);
+    const session = cookieValue(request, sessionCookie);
     if (!pathname.startsWith('/api/')) {
       const response = await env.ASSETS.fetch(request);
       if (pathname !== '/' || request.method !== 'GET' || !response.ok) return response;
       const page = new Response(response.body, response);
       page.headers.set('Cache-Control', 'private, no-store');
-      if (!workspacePattern.test(workspace ?? '')) {
-        page.headers.append('Set-Cookie', workspaceCookie + '=' + id() +
-          '; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Strict');
+      if (!session && !workspacePattern.test(guest ?? '')) {
+        page.headers.append('Set-Cookie', cookie(workspaceCookie, id(), 31536000));
       }
       return page;
     }
 
     const authorization = request.headers.get('Authorization') ?? '';
+    const token = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
     const ingestion = pathname === '/api/traces' && request.method === 'POST';
-    let usesToken = false;
-    if (ingestion && authorization.startsWith('Bearer ')) {
-      const candidate = await ingestionWorkspace(authorization.slice(7), env.AGENTOPS_INGEST_TOKEN);
-      if (!workspacePattern.test(candidate ?? '')) {
-        return json({error:'Invalid workspace ingestion token'}, 401);
-      }
-      workspace = candidate;
-      usesToken = true;
-    }
-    if (!workspacePattern.test(workspace ?? '')) {
-      return json({error:'Open AgentOps in a browser to start a workspace'}, 401);
-    }
-    if (request.method === 'POST' && !usesToken) {
+    const secret = env.AGENTOPS_INGEST_TOKEN;
+    const accounts = env.ACCOUNTS.getByName('accounts');
+    const accountRequest = action => {
+      const internal = new Request('https://accounts.internal/' + action, request);
+      internal.headers.delete('Cookie');
+      internal.headers.delete('Authorization');
+      internal.headers.set('X-AgentOps-Session', session ?? '');
+      internal.headers.set('X-AgentOps-Guest', guest ?? '');
+      internal.headers.set('X-AgentOps-Address', request.headers.get('CF-Connecting-IP') ?? '');
+      return accounts.fetch(internal);
+    };
+
+    if (request.method === 'POST' && (!token || pathname.startsWith('/api/auth/'))) {
       const source = request.headers.get('Origin');
       if ((source && source !== origin) || request.headers.get('Sec-Fetch-Site') === 'cross-site') {
         return json({error:'Cross-origin write rejected'}, 403);
       }
     }
-    if (pathname === '/api/workspace' && request.method === 'GET') {
-      if (!env.AGENTOPS_INGEST_TOKEN) return json({error:'Trace ingestion has not been configured'}, 503);
-      return json({ingest_token:await ingestionToken(workspace, env.AGENTOPS_INGEST_TOKEN)});
+    if (pathname.startsWith('/api/auth/')) {
+      const action = pathname.slice('/api/auth/'.length);
+      if (action === 'status' && request.method === 'GET') {
+        const {user, claimed} = await (await accountRequest('resolve')).json();
+        const response = json({user, sms_configured:smsConfigured(env), required:env.REQUIRE_LOGIN === 'true'});
+        if (!user && (session || claimed || !workspacePattern.test(guest ?? ''))) {
+          response.headers.append('Set-Cookie', cookie(sessionCookie, '', 0));
+          response.headers.append('Set-Cookie', cookie(workspaceCookie, id(), 31536000));
+        }
+        return response;
+      }
+      if (request.method !== 'POST' || !['send','verify','password','logout'].includes(action)) {
+        return json({error:'Unknown auth endpoint'}, 404);
+      }
+      return accountRequest(action);
     }
-    return env.WORKSPACE.getByName('browser:' + workspace).fetch(request);
+
+    if (token) {
+      if (!secret) return json({error:'API credentials are unavailable'}, 503);
+      if (token.startsWith('aops_') && /^aops_[A-Za-z0-9_-]{80}$/.test(token)) {
+        if (!allowedScope(pathname, request.method)) return json({error:'API key cannot use this endpoint'}, 403);
+        const workspace = await unseal(token.slice(5), secret, 'agentops-api');
+        if (workspacePattern.test(workspace ?? '')) {
+          return env.WORKSPACE.getByName('browser:' + workspace).fetch(request);
+        }
+      } else if (ingestion && /^[A-Za-z0-9_-]{80}$/.test(token) && env.REQUIRE_LOGIN !== 'true') {
+        const workspace = await unseal(token, secret, 'agentops-ingest');
+        if (workspacePattern.test(workspace ?? '')) {
+          const response = await accounts.fetch(new Request('https://accounts.internal/resolve',
+            {headers:{'X-AgentOps-Guest':workspace}}));
+          if (!(await response.json()).claimed) return env.WORKSPACE.getByName('browser:' + workspace).fetch(request);
+        }
+      }
+      return json({error:'Invalid API credential'}, 401);
+    }
+
+    const {user, workspace:accountWorkspace, claimed} = await (await accountRequest('resolve')).json();
+    if (!user && (env.REQUIRE_LOGIN === 'true' || claimed)) return json({error:'Please sign in to continue'}, 401);
+    const workspace = accountWorkspace ?? guest;
+    if (!workspacePattern.test(workspace ?? '')) return json({error:'Open AgentOps to start a workspace'}, 401);
+    if (pathname === '/api/workspace' && request.method === 'GET') {
+      if (user) return json({error:'Create a scoped key under API Keys'}, 403);
+      if (!secret) return json({error:'Trace ingestion has not been configured'}, 503);
+      return json({ingest_token:await seal(workspace, secret, 'agentops-ingest')});
+    }
+    const internal = new Request(request);
+    internal.headers.set('X-AgentOps-Workspace', workspace);
+    return env.WORKSPACE.getByName('browser:' + workspace).fetch(internal);
   }
 };
 
@@ -105,6 +147,7 @@ export class Workspace extends DurableObject {
     this.sql = ctx.storage.sql;
     this.sql.exec('CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, kind TEXT, payload TEXT)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS traces (payload TEXT NOT NULL)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, digest TEXT NOT NULL UNIQUE, name TEXT NOT NULL, prefix TEXT NOT NULL, scopes TEXT NOT NULL, created TEXT NOT NULL, last_used TEXT, revoked TEXT)');
   }
 
   rows(table) {
@@ -116,6 +159,34 @@ export class Workspace extends DurableObject {
     const record = {...fields, kind, id:id(), at:new Date().toISOString()};
     this.sql.exec('INSERT INTO records VALUES (?, ?, ?)', record.id, kind, JSON.stringify(record));
     return record;
+  }
+
+  async createApiKey(data, workspace) {
+    const name = requiredText(data, 'name');
+    if (name.length > 80) throw new InputError('Use a name of up to 80 characters');
+    if (!Array.isArray(data.scopes) || !data.scopes.length ||
+        data.scopes.some(scope => !['traces:read','traces:write','agents:run'].includes(scope))) {
+      throw new InputError('Choose at least one valid scope');
+    }
+    if (!this.env.AGENTOPS_INGEST_TOKEN || !workspacePattern.test(workspace ?? '')) {
+      throw new InputError('API key service is unavailable');
+    }
+    const token = 'aops_' + await seal(workspace, this.env.AGENTOPS_INGEST_TOKEN, 'agentops-api');
+    const digest = await sha256(token);
+    const scopes = [...new Set(data.scopes)];
+    const key = {id:id(), name, prefix:token.slice(0, 14), scopes, created:new Date().toISOString()};
+    this.sql.exec('INSERT INTO api_keys (id,digest,name,prefix,scopes,created) VALUES (?,?,?,?,?,?)',
+      key.id, digest, key.name, key.prefix, JSON.stringify(scopes), key.created);
+    return {...key, token};
+  }
+
+  async checkApiKey(token, scope) {
+    const digest = await sha256(token);
+    const key = this.sql.exec('SELECT scopes FROM api_keys WHERE digest=? AND revoked IS NULL', digest).toArray()[0];
+    if (!key) return json({error:'API key is invalid or revoked'}, 401);
+    if (!JSON.parse(key.scopes).includes(scope)) return json({error:'API key is missing the required permission'}, 403);
+    this.sql.exec('UPDATE api_keys SET last_used=? WHERE digest=?', new Date().toISOString(), digest);
+    return null;
   }
 
   saveTrace(fields) {
@@ -167,7 +238,10 @@ export class Workspace extends DurableObject {
     const messages = [{role:'user', content}];
     if (instructions) messages.unshift({role:'system', content:instructions});
     const headers = {'Content-Type':'application/json'};
-    const apiKey = provider ? provider.api_key : this.env.TRACE_STUDIO_MODEL_KEY;
+    const apiKey = provider?.encrypted_key
+      ? await unseal(provider.encrypted_key, this.env.AGENTOPS_INGEST_TOKEN, 'agentops-model')
+      : provider ? provider.api_key : this.env.TRACE_STUDIO_MODEL_KEY;
+    if (provider?.encrypted_key && !apiKey) throw new InputError('Model key could not be decrypted');
     if (apiKey) headers.Authorization = 'Bearer ' + apiKey;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
@@ -200,17 +274,45 @@ export class Workspace extends DurableObject {
       if (!record) throw new InputError(kind + ' was not found');
       return record;
     };
-    if (action === 'models') {
+    if (action === 'models' || action === 'models-update') {
+      const existing = action === 'models-update' ? find('provider', 'model') : null;
       const name = requiredText(data, 'name');
       const model = requiredText(data, 'model');
+      const vendor = data.vendor ?? existing?.vendor ?? 'custom';
+      if (!['custom','deepseek','bailian'].includes(vendor)) throw new InputError('Invalid model provider');
       let url;
       try { url = new URL(requiredText(data, 'url')); }
       catch { throw new InputError('Enter a valid HTTPS Chat Completions endpoint'); }
       if (url.protocol !== 'https:' || url.username || url.password || url.hash) {
         throw new InputError('Use an HTTPS endpoint without embedded credentials or a fragment');
       }
-      const apiKey = typeof data.api_key === 'string' ? data.api_key.trim() : '';
-      return publicRecord(this.save('model', {name, model, url:url.href, api_key:apiKey}));
+      if (vendor === 'deepseek' && url.hostname !== 'api.deepseek.com') throw new InputError('Use the official DeepSeek endpoint');
+      if (vendor === 'bailian' && !/^(dashscope(-intl)?\.aliyuncs\.com|[a-z0-9-]+\.[a-z0-9-]+\.maas\.aliyuncs\.com)$/.test(url.hostname)) {
+        throw new InputError('Use the Bailian endpoint for your API key’s region');
+      }
+      const supplied = typeof data.api_key === 'string' ? data.api_key.trim() : '';
+      if (supplied.length > 1024 || /[\r\n]/.test(supplied)) throw new InputError('Invalid API key');
+      if (existing && !supplied && new URL(existing.url).origin !== url.origin &&
+          (existing.api_key || existing.encrypted_key)) throw new InputError('Enter a new API key when changing the endpoint host');
+      if (supplied && !this.env.AGENTOPS_INGEST_TOKEN) throw new InputError('Model credential storage is unavailable');
+      const oldKey = existing?.api_key;
+      const encrypted_key = supplied || oldKey
+        ? await seal(supplied || oldKey, this.env.AGENTOPS_INGEST_TOKEN, 'agentops-model')
+        : existing?.encrypted_key;
+      if (!encrypted_key && vendor !== 'custom') throw new InputError('Enter the provider API key');
+      const fields = {name, model, vendor, url:url.href, encrypted_key};
+      if (!existing) return publicRecord(this.save('model', fields));
+      const updated = {...fields, kind:existing.kind, id:existing.id, at:existing.at, updated_at:new Date().toISOString()};
+      this.sql.exec('UPDATE records SET payload=? WHERE id=?', JSON.stringify(updated), updated.id);
+      return publicRecord(updated);
+    }
+    if (action === 'models-delete') {
+      const model = find('provider', 'model');
+      if (records.some(item => item.kind === 'agent' && item.provider === model.id)) {
+        throw new InputError('Reassign agents using this model before removing it');
+      }
+      this.sql.exec('DELETE FROM records WHERE id=?', model.id);
+      return {ok:true};
     }
     if (action === 'model-test') {
       const provider = find('provider', 'model');
@@ -237,6 +339,13 @@ export class Workspace extends DurableObject {
         else if (!this.env.TRACE_STUDIO_MODEL) throw new InputError('Choose a model before creating the agent');
       }
       return this.save('agent', agent);
+    }
+    if (action === 'agent-model') {
+      const agent = find('agent', 'agent');
+      if (agent.source === 'external') throw new InputError('External agents do not use a Studio model');
+      const updated = {...agent, provider:find('provider', 'model').id};
+      this.sql.exec('UPDATE records SET payload=? WHERE id=?', JSON.stringify(updated), agent.id);
+      return updated;
     }
     if (action === 'deployments') return this.save('deployment', {
       name:requiredText(data, 'name'), prompt:find('prompt', 'prompt').id
@@ -298,7 +407,21 @@ export class Workspace extends DurableObject {
 
   async fetch(request) {
     const {pathname} = new URL(request.url);
+    const bearer = request.headers.get('Authorization') ?? '';
+    if (bearer.startsWith('Bearer aops_')) {
+      const scope = allowedScope(pathname, request.method);
+      if (!scope) return json({error:'API key cannot use this endpoint'}, 403);
+      const problem = await this.checkApiKey(bearer.slice(7), scope);
+      if (problem) return problem;
+    }
     if (request.method === 'GET') {
+      if (pathname === '/api/keys') {
+        const keys = this.sql.exec('SELECT id,name,prefix,scopes,created,last_used,revoked FROM api_keys ORDER BY created DESC').toArray();
+        return json(keys.map(key => ({...key, scopes:JSON.parse(key.scopes)})));
+      }
+      if (pathname === '/api/agents') return json(this.rows('records').filter(record => record.kind === 'agent').map(
+        ({id, identifier, name, source}) => ({id, identifier, name, source})
+      ));
       if (pathname === '/api/traces') return json(this.rows('traces'));
       if (pathname === '/api/platform') return json(this.rows('records').map(publicRecord));
     }
@@ -321,6 +444,14 @@ export class Workspace extends DurableObject {
         }
         const data = JSON.parse(body + decoder.decode());
         if (!data || Array.isArray(data) || typeof data !== 'object') throw new InputError('Expected a JSON object');
+        if (pathname === '/api/keys') return json(await this.createApiKey(data, request.headers.get('X-AgentOps-Workspace')), 201);
+        if (pathname === '/api/keys/revoke') {
+          const key = requiredText(data, 'id');
+          const updated = this.sql.exec('UPDATE api_keys SET revoked=? WHERE id=? AND revoked IS NULL RETURNING id',
+            new Date().toISOString(), key).toArray();
+          if (!updated.length) return json({error:'Active API key was not found'}, 404);
+          return json({ok:true});
+        }
         if (pathname === '/api/traces') return json(this.ingest(data), 201);
         if (pathname.startsWith('/api/platform/')) return json(await this.action(pathname.slice(14), data), 201);
       } catch (error) {

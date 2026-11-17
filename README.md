@@ -43,7 +43,7 @@ npx wrangler deploy
 npx wrangler secret put AGENTOPS_INGEST_TOKEN
 ```
 
-打开页面即可进入当前浏览器的独立工作区。请保留站点 Cookie 以便下次访问同一工作区。外部 Agent 向 `POST /api/traces` 发送 JSON 时，从 Agent Registry 展开 Agent 并点击 **Show ingestion token**，复制该工作区的 Authorization 请求头。该令牌仅允许写入 Trace。部署后可用 `GET /healthz` 检查服务状态。
+打开页面即可进入当前浏览器的独立工作区。请保留站点 Cookie 以便下次访问同一工作区。外部 Agent 从 **API Keys** 创建具有 **Send traces** 权限的密钥，调用 `POST /api/traces` 时使用 Bearer 请求头。部署后可用 `GET /healthz` 检查服务状态。
 
 如需调用真实模型，在 Worker 中设置 `TRACE_STUDIO_MODEL` 和 `TRACE_STUDIO_MODEL_URL`，并通过 `wrangler secret put TRACE_STUDIO_MODEL_KEY` 配置模型密钥。
 
@@ -56,3 +56,31 @@ npx wrangler secret put AGENTOPS_INGEST_TOKEN
 支持 OpenAI 兼容的 Chat Completions 接口。Cloudflare 部署要求 HTTPS。本机 Python 版本也支持回环地址上的 HTTP 模型服务。模型密钥由服务端保存，列表和测试接口不会返回密钥。既有 Agent 仍可使用部署环境中配置的默认模型。
 
 Cloudflare Workers AI 测试连接使用独立的私有 Worker。新账号部署时，先用 `npx wrangler deploy --config cloudflare/workers-ai/wrangler.jsonc` 部署模型适配器，再为适配器设置 `ADAPTER_KEY`。AgentOps 通过服务绑定调用它，其他模型继续通过各自的 HTTPS 端点调用。
+
+## 开放平台
+
+**Models** 支持 DeepSeek、阿里云百炼（北京预设）和自定义 OpenAI 兼容接口。百炼的区域地址要与供应商 API Key 一致，可以填业务空间专属域名。保存后可发消息测试、更新连接或轮换密钥。Agent 可以更换绑定的模型。模型供应商的密钥在后端加密保存，不能从列表读出。保留部署用的 `AGENTOPS_INGEST_TOKEN`，更换它会使已加密的模型密钥和已签发的 AgentOps API Key 失效。
+
+**API Keys** 签发的是 AgentOps 密钥。密钥创建时显示一次，服务端仅保留摘要，支持查看最近使用时间和即时撤销。权限按接口划分：
+
+| 权限 | 接口 |
+| --- | --- |
+| Read traces | `GET /api/traces` |
+| Send traces | `POST /api/traces` |
+| List and run agents | `GET /api/agents`、`POST /api/platform/runs` |
+
+```sh
+curl -H "Authorization: Bearer $AGENTOPS_API_KEY" https://agentops.cloudmoro.com/api/agents
+curl -H "Authorization: Bearer $AGENTOPS_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"target_kind":"agent","target":"<GET /api/agents 返回的 id>","input":"你好"}' \
+  https://agentops.cloudmoro.com/api/platform/runs
+```
+
+## 手机号、短信和账号
+
+生产账号由 Cloudflare Durable Object 管理。阿里云号码认证服务负责向中国大陆手机号发送并核验短信验证码。首次验证创建账号并接管当前浏览器的访客工作区，后续可以换设备登录。账号可设置密码，设置后登录要同时验证密码与短信验证码。忘记密码时可通过短信验证码重置；退出登录会吊销当前会话。
+
+1. 在[阿里云号码认证控制台](https://dypns.console.aliyun.com/)开通短信认证，选用支持 `code` 与 `min` 参数的登录／注册签名和模板。准备仅可调用 `dypns:SendSmsVerifyCode` 和 `dypns:CheckSmsVerifyCode` 的 RAM 凭据，具体权限名称见对应 OpenAPI 说明。
+2. 用 `npx wrangler secret put <名称>` 设置 `PNVS_ACCESS_KEY_ID`、`PNVS_ACCESS_KEY_SECRET`、`PNVS_SIGN_NAME`、`PNVS_TEMPLATE_CODE`。
+3. 用本人手机号实测短信收发与登录；准备正式启用时将 `REQUIRE_LOGIN` 设为字符串 `true` 并重新部署。启用强制登录前，访客仍可使用各自浏览器中的独立工作区。

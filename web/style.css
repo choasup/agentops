@@ -12,3 +12,5 @@ dialog{border:1px solid var(--border);border-radius:14px;padding:22px;width:min(
 @media(max-width:620px){.sidebar nav{flex-wrap:wrap}.nav{padding:5px 8px;font-size:12px}}
 
 .module-panel.wide{grid-column:1/-1}
+
+[hidden]{display:none!important}.header-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.key-scopes{display:flex;align-items:flex-start;flex-wrap:wrap;gap:8px 14px}.key-scopes label{display:flex;align-items:center;gap:5px}.model-actions{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}.module-form .button{max-width:100%}dialog .module-panel{margin:10px 0}
