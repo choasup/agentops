@@ -82,8 +82,11 @@ class Handler(SimpleHTTPRequestHandler):
             ):
                 raise ValueError('Use HTTPS or a local HTTP model endpoint without embedded credentials')
             key = data.get('api_key')
+            vendor = data.get('vendor', 'custom')
+            if vendor not in ('custom', 'deepseek', 'bailian'):
+                raise ValueError('Invalid model provider')
             return public_record(self.save_record('model', dict(
-                name=name, model=model, url=url, api_key=key.strip() if isinstance(key, str) else ''
+                name=name, model=model, url=url, vendor=vendor, api_key=key.strip() if isinstance(key, str) else ''
             )))
         if action == 'datasets':
             return self.save_record('dataset', {'name': required_text('name')})
@@ -159,8 +162,27 @@ class Handler(SimpleHTTPRequestHandler):
 
         if action == 'model-test':
             provider = record_for('provider', 'model')
-            output, tokens = execute(None, required_text('message'), 'Reply briefly.', provider)
-            return dict(output=output, tokens=tokens)
+            message = required_text('message')
+            checked_at = datetime.now(timezone.utc).isoformat()
+            start = time.perf_counter()
+            status = 'failed'
+            try:
+                output, tokens = execute(None, message, 'Reply briefly.', provider)
+                status = 'ready'
+                return dict(output=output, tokens=tokens, duration=(time.perf_counter() - start) * 1000)
+            finally:
+                with database() as connection:
+                    connection.execute('BEGIN IMMEDIATE')
+                    row = connection.execute('SELECT payload FROM records WHERE id=?', (provider['id'],)).fetchone()
+                    if row:
+                        current = json.loads(row[0])
+                        if current.get('updated_at') == provider.get('updated_at') and (
+                            not current.get('check') or current['check']['at'] <= checked_at
+                        ):
+                            current['check'] = dict(status=status, at=checked_at,
+                                                    duration=(time.perf_counter() - start) * 1000)
+                            connection.execute('UPDATE records SET payload=? WHERE id=?',
+                                               (json.dumps(current, allow_nan=False), provider['id']))
         if action == 'experiments':
             dataset = record_for('dataset', 'dataset')
             prompt = record_for('prompt', 'prompt')

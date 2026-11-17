@@ -326,7 +326,22 @@ export class Workspace extends DurableObject {
     }
     if (action === 'model-test') {
       const provider = find('provider', 'model');
-      return this.execute(null, requiredText(data, 'message'), 'Reply briefly.', provider);
+      const message = requiredText(data, 'message');
+      const checkedAt = new Date().toISOString();
+      const start = performance.now();
+      let status = 'failed';
+      try {
+        const result = await this.execute(null, message, 'Reply briefly.', provider);
+        status = 'ready';
+        return {...result, duration:performance.now() - start};
+      } finally {
+        const row = this.sql.exec('SELECT payload FROM records WHERE id=? AND kind=?', provider.id, 'model').toArray()[0];
+        const current = row && JSON.parse(row.payload);
+        if (current && current.updated_at === provider.updated_at && (!current.check || current.check.at <= checkedAt)) {
+          current.check = {status, at:checkedAt, duration:performance.now() - start};
+          this.sql.exec('UPDATE records SET payload=? WHERE id=?', JSON.stringify(current), provider.id);
+        }
+      }
     }
     if (action === 'datasets') return this.save('dataset', {name:requiredText(data, 'name')});
     if (action === 'examples') {

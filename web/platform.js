@@ -1,7 +1,7 @@
 const platformContent = byId('platform-content');
 const modules = {
   keys: ['API Keys', 'Create scoped credentials for applications using this workspace.'],
-  models: ['Models', 'Connect and test an OpenAI-compatible model for your agents.'],
+  models: ['Models', 'Manage the model connections your agents run on.'],
   datasets: ['Datasets', 'Curate examples and reference outputs for evaluation.'],
   experiments: ['Experiments', 'Evaluate prompt versions against a dataset and compare scores.'],
   feedback: ['Review Queue', 'Score ingested traces and record reviewer feedback.'],
@@ -24,12 +24,6 @@ function timeLabel(value) {
   return new Date(value).toLocaleString(undefined, {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'});
 }
 
-const providerPresets = {
-  deepseek: {label:'DeepSeek', url:'https://api.deepseek.com/chat/completions', model:'deepseek-v4-flash'},
-  bailian: {label:'Alibaba Cloud Bailian · 北京', url:'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model:'qwen-plus'},
-  custom: {label:'Custom · OpenAI compatible', url:'', model:''}
-};
-
 async function keyRequest(path = '', data) {
   const response = await fetch('/api/keys' + path, data === undefined ? {cache:'no-store'} : {
     method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)
@@ -37,32 +31,6 @@ async function keyRequest(path = '', data) {
   const result = await response.json();
   if (!response.ok) throw new Error(result.error ?? 'API key request failed');
   return result;
-}
-
-function modelForm(existing, onSave) {
-  const vendor = field('vendor', 'Provider', Object.entries(providerPresets).map(([key, preset]) => [key, preset.label]));
-  const select = vendor.querySelector('select');
-  select.value = existing?.vendor ?? 'custom';
-  const name = field('name', 'Name', 'text', existing?.name ?? '');
-  const url = field('url', 'Chat Completions URL', 'url', existing?.url ?? '');
-  const model = field('model', 'Model ID', 'text', existing?.model ?? '');
-  const key = field('api_key', existing?.has_api_key ? 'API key (leave blank to keep current key)' : 'Provider API key', 'password');
-  const nameInput = name.querySelector('input');
-  const urlInput = url.querySelector('input');
-  const modelInput = model.querySelector('input');
-  const keyInput = key.querySelector('input');
-  urlInput.placeholder = 'https://api.example.com/v1/chat/completions';
-  keyInput.autocomplete = 'off';
-  keyInput.required = !existing?.has_api_key && select.value !== 'custom';
-  select.addEventListener('change', () => {
-    const preset = providerPresets[select.value];
-    urlInput.value = preset?.url ?? '';
-    modelInput.value = preset?.model ?? '';
-    if (!nameInput.value) nameInput.value = preset?.label ?? '';
-    keyInput.required = !existing?.has_api_key && select.value !== 'custom';
-  });
-  return formPanel(existing ? 'Edit model connection' : 'Connect a model',
-    [vendor, name, url, model, key], 'Save model', onSave);
 }
 
 const ofKind = kind => records.filter(record => record.kind === kind);
@@ -158,49 +126,10 @@ function renderModule(module, selectedTarget) {
   const inputField = () => field('input', 'Input JSON', 'textarea', '{"input":"Hello"}');
 
   if (module === 'models') {
-    panels.push(modelForm(null, data => create(module, data)));
-    if (ofKind('model').length) {
-      panels.push(formPanel('Test connection', [
-        field('provider', 'Model', options('model')), field('message', 'Message', 'textarea', 'Reply with OK.')
-      ], 'Test model', async (data, section) => {
-        section.querySelector('.module-result')?.remove();
-        const result = await platformRequest('/model-test', data);
-        section.append(element('pre', result.output, 'module-result'));
-      }));
-    }
-    panels.push(listPanel('Connected models', ofKind('model').map(record => {
-      const item = expandable(record.name + ' · ' + record.model, {
-        provider:providerPresets[record.vendor ?? 'custom']?.label,
-        endpoint:record.url, credential:record.has_api_key ? 'API key saved' : 'No API key'
-      });
-      if (location.protocol !== 'https:') return item;
-      const actions = element('div', undefined, 'model-actions');
-      const edit = element('button', 'Edit', 'button');
-      edit.addEventListener('click', () => openModal(record.name, [
-        modelForm(record, async data => {
-          await platformRequest('/models-update', {...data, provider:record.id});
-          byId('modal').close();
-          await loadModule('models');
-        })
-      ]));
-      const remove = element('button', 'Remove', 'button');
-      const result = element('p');
-      result.setAttribute('role', 'status');
-      remove.addEventListener('click', async () => {
-        if (!window.confirm('Remove the model connection “' + record.name + '”?')) return;
-        remove.disabled = true;
-        try {
-          await platformRequest('/models-delete', {provider:record.id});
-          await loadModule('models');
-        } catch (error) {
-          result.textContent = error.message;
-          remove.disabled = false;
-        }
-      });
-      actions.append(edit, remove);
-      item.append(actions, result);
-      return item;
-    })));
+    const connect = element('button', '+ Add model', 'button primary');
+    connect.addEventListener('click', chooseModelProvider);
+    heading.append(connect);
+    panels.push(modelsWorkspace());
   }
 
   if (module === 'keys') {
