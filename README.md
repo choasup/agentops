@@ -43,7 +43,7 @@ npx wrangler deploy
 npx wrangler secret put AGENTOPS_INGEST_TOKEN
 ```
 
-打开页面即可进入当前浏览器的独立工作区。请保留站点 Cookie 以便下次访问同一工作区。外部 Agent 从 **API Keys** 创建具有 **Send traces** 权限的密钥，调用 `POST /api/traces` 时使用 Bearer 请求头。部署后可用 `GET /healthz` 检查服务状态。
+生产工作区须先登录。首次登录会接管该浏览器的访客工作区，此后可在其他设备用同一个邮箱继续使用。外部 Agent 从 **API Keys** 创建具有 **Send traces** 权限的密钥，调用 `POST /api/traces` 时使用 Bearer 请求头。部署后可用 `GET /healthz` 检查服务状态。
 
 如需调用真实模型，在 Worker 中设置 `TRACE_STUDIO_MODEL` 和 `TRACE_STUDIO_MODEL_URL`，并通过 `wrangler secret put TRACE_STUDIO_MODEL_KEY` 配置模型密钥。
 
@@ -83,4 +83,8 @@ curl -H "Authorization: Bearer $AGENTOPS_API_KEY" \
 
 1. 在[阿里云号码认证控制台](https://dypns.console.aliyun.com/)开通短信认证，选用支持 `code` 与 `min` 参数的登录／注册签名和模板。准备仅可调用 `dypns:SendSmsVerifyCode` 和 `dypns:CheckSmsVerifyCode` 的 RAM 凭据，具体权限名称见对应 OpenAPI 说明。
 2. 用 `npx wrangler secret put <名称>` 设置 `PNVS_ACCESS_KEY_ID`、`PNVS_ACCESS_KEY_SECRET`、`PNVS_SIGN_NAME`、`PNVS_TEMPLATE_CODE`。
-3. 用本人手机号实测短信收发与登录；准备正式启用时将 `REQUIRE_LOGIN` 设为字符串 `true` 并重新部署。启用强制登录前，访客仍可使用各自浏览器中的独立工作区。
+3. 用本人手机号实测短信收发与登录；准备正式启用时将 `REQUIRE_LOGIN` 设为字符串 `true` 并重新部署。如果尚未接好任何验证码通道，请先配置并测试再启用强制登录。
+
+### 邮箱验证码
+
+Cloudflare Email Sending 给用户邮箱发 6 位验证码。当前发信地址为 `login@mail.agentops.cloudmoro.com`。将发信子域加入 Email Sending，部署同名 `AUTH_EMAIL` 发信绑定并设置 `LOGIN_FROM`。请关闭发信子域的邮件正文预览。邮件验证码有效期 5 分钟，最多尝试 5 次，用过即失效。邮箱和手机号是两个登录标识，分别注册会建立独立账号。

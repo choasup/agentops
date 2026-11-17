@@ -6,7 +6,8 @@
   "preview_urls": false,
   "routes": [{"pattern": "agentops.cloudmoro.com", "custom_domain": true}],
   "services": [{"binding": "MODEL_ADAPTER", "service": "agentops-workers-ai"}],
-  "vars": {"MODEL_ADAPTER_URL": "https://agentops-workers-ai.ly-choas.workers.dev/v1/chat/completions"},
+  "send_email": [{"name":"AUTH_EMAIL","allowed_sender_addresses":["login@mail.agentops.cloudmoro.com"]}],
+  "vars": {"REQUIRE_LOGIN":"true","LOGIN_FROM":"login@mail.agentops.cloudmoro.com","MODEL_ADAPTER_URL": "https://agentops-workers-ai.ly-choas.workers.dev/v1/chat/completions"},
   "assets": {"directory": "./web", "binding": "ASSETS", "run_worker_first": true},
   "durable_objects": {"bindings": [{"name": "WORKSPACE", "class_name": "Workspace"}, {"name":"ACCOUNTS","class_name":"Accounts"}]},
   "migrations": [{"tag": "v1", "new_sqlite_classes": ["Workspace"]}, {"tag":"v2","new_sqlite_classes":["Accounts"]}]

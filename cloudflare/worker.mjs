@@ -1,5 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
-import { cookie, cookieValue, json, randomId as id, sessionCookie, sha256,
+import { cookie, cookieValue, emailConfigured, json, randomId as id, sessionCookie, sha256,
   smsConfigured, workspaceCookie, workspacePattern } from './accounts.mjs';
 export { Accounts } from './accounts.mjs';
 
@@ -75,13 +75,19 @@ export default {
     const secret = env.AGENTOPS_INGEST_TOKEN;
     const accounts = env.ACCOUNTS.getByName('accounts');
     const accountRequest = action => {
-      const internal = new Request('https://accounts.internal/' + action, request);
+      const url = 'https://accounts.internal/' + action;
+      const internal = action === 'resolve' ? new Request(url) : new Request(url, request);
       internal.headers.delete('Cookie');
       internal.headers.delete('Authorization');
       internal.headers.set('X-AgentOps-Session', session ?? '');
       internal.headers.set('X-AgentOps-Guest', guest ?? '');
       internal.headers.set('X-AgentOps-Address', request.headers.get('CF-Connecting-IP') ?? '');
       return accounts.fetch(internal);
+    };
+    const isClaimed = async workspace => {
+      const response = await accounts.fetch(new Request('https://accounts.internal/resolve',
+        {headers:{'X-AgentOps-Guest':workspace}}));
+      return (await response.json()).claimed;
     };
 
     if (request.method === 'POST' && (!token || pathname.startsWith('/api/auth/'))) {
@@ -94,7 +100,7 @@ export default {
       const action = pathname.slice('/api/auth/'.length);
       if (action === 'status' && request.method === 'GET') {
         const {user, claimed} = await (await accountRequest('resolve')).json();
-        const response = json({user, sms_configured:smsConfigured(env), required:env.REQUIRE_LOGIN === 'true'});
+        const response = json({user, email_configured:emailConfigured(env), sms_configured:smsConfigured(env), required:env.REQUIRE_LOGIN === 'true'});
         if (!user && (session || claimed || !workspacePattern.test(guest ?? ''))) {
           response.headers.append('Set-Cookie', cookie(sessionCookie, '', 0));
           response.headers.append('Set-Cookie', cookie(workspaceCookie, id(), 31536000));
@@ -113,14 +119,15 @@ export default {
         if (!allowedScope(pathname, request.method)) return json({error:'API key cannot use this endpoint'}, 403);
         const workspace = await unseal(token.slice(5), secret, 'agentops-api');
         if (workspacePattern.test(workspace ?? '')) {
+          if (env.REQUIRE_LOGIN === 'true' && !await isClaimed(workspace)) {
+            return json({error:'Sign in to activate this workspace key'}, 403);
+          }
           return env.WORKSPACE.getByName('browser:' + workspace).fetch(request);
         }
       } else if (ingestion && /^[A-Za-z0-9_-]{80}$/.test(token) && env.REQUIRE_LOGIN !== 'true') {
         const workspace = await unseal(token, secret, 'agentops-ingest');
         if (workspacePattern.test(workspace ?? '')) {
-          const response = await accounts.fetch(new Request('https://accounts.internal/resolve',
-            {headers:{'X-AgentOps-Guest':workspace}}));
-          if (!(await response.json()).claimed) return env.WORKSPACE.getByName('browser:' + workspace).fetch(request);
+          if (!await isClaimed(workspace)) return env.WORKSPACE.getByName('browser:' + workspace).fetch(request);
         }
       }
       return json({error:'Invalid API credential'}, 401);

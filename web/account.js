@@ -13,15 +13,28 @@ async function authRequest(action, data) {
 const accountButton = byId('account');
 
 function accountForm() {
-  if (!accountStatus.sms_configured) {
-    return [element('p', '手机号登录入口已就绪，短信服务配置完成后可发送验证码。')];
+  if (!accountStatus.email_configured && !accountStatus.sms_configured) {
+    return [element('p', '邮箱和短信登录入口已就绪，发信服务配置完成后可获取验证码。')];
   }
   const form = element('form', undefined, 'module-form');
-  const phone = field('phone', '中国大陆手机号', 'tel');
-  const phoneInput = phone.querySelector('input');
-  phoneInput.autocomplete = 'tel-national';
-  phoneInput.placeholder = '例如 13800000000';
-  const code = field('code', '短信验证码');
+  const channels = [];
+  if (accountStatus.email_configured) channels.push(['email', '邮箱']);
+  if (accountStatus.sms_configured) channels.push(['phone', '手机号']);
+  const method = field('method', '登录方式', channels);
+  const methodInput = method.querySelector('select');
+  methodInput.value = channels[0][0];
+  method.hidden = channels.length === 1;
+  const address = field('address', '邮箱地址', 'email');
+  const addressInput = address.querySelector('input');
+  const setAddressType = () => {
+    const email = methodInput.value === 'email';
+    address.firstChild.textContent = email ? '邮箱地址' : '中国大陆手机号';
+    addressInput.type = email ? 'email' : 'tel';
+    addressInput.autocomplete = email ? 'email' : 'tel-national';
+    addressInput.placeholder = email ? 'name@example.com' : '例如 13800000000';
+  };
+  setAddressType();
+  const code = field('code', '验证码');
   const codeInput = code.querySelector('input');
   codeInput.inputMode = 'numeric';
   codeInput.autocomplete = 'one-time-code';
@@ -46,7 +59,8 @@ function accountForm() {
   const message = element('p');
   message.setAttribute('role', 'status');
   let challenge;
-  let requestedPhone;
+  let requestedAddress;
+  let requestedMethod;
   let countdown;
   let recovering = false;
 
@@ -58,20 +72,33 @@ function accountForm() {
     toggle.textContent = recovering ? '返回登录' : '忘记密码';
     submit.textContent = recovering ? '重置密码并登录' : '登录或注册';
   });
-  phoneInput.addEventListener('input', () => {
-    submit.disabled = phoneInput.value.trim() !== requestedPhone;
+  const matchesRequest = () => addressInput.value.trim() === requestedAddress &&
+    methodInput.value === requestedMethod;
+  addressInput.addEventListener('input', () => { submit.disabled = !matchesRequest(); });
+  methodInput.addEventListener('change', () => {
+    setAddressType();
+    addressInput.value = '';
+    codeInput.value = '';
+    message.textContent = '';
+    submit.disabled = true;
+    clearInterval(countdown);
+    send.disabled = false;
+    send.textContent = '获取验证码';
   });
 
   send.addEventListener('click', async () => {
-    if (!phoneInput.reportValidity()) return;
+    if (!addressInput.reportValidity()) return;
     send.disabled = true;
+    methodInput.disabled = true;
     message.textContent = '';
-    const entered = phoneInput.value.trim();
+    const entered = addressInput.value.trim();
+    const channel = methodInput.value;
     try {
-      const result = await authRequest('send', {phone:entered});
+      const result = await authRequest('send', {[channel]:entered});
       challenge = result.challenge;
-      requestedPhone = entered;
-      submit.disabled = phoneInput.value.trim() !== requestedPhone;
+      requestedAddress = entered;
+      requestedMethod = channel;
+      submit.disabled = !matchesRequest();
       message.textContent = '验证码已发送，5 分钟内有效。';
       let seconds = result.retry_after;
       send.textContent = '重新发送（' + seconds + ' 秒）';
@@ -86,15 +113,17 @@ function accountForm() {
     } catch (error) {
       message.textContent = error.message;
       send.disabled = false;
+    } finally {
+      methodInput.disabled = false;
     }
   });
 
   form.addEventListener('submit', async event => {
     event.preventDefault();
-    if (!challenge || requestedPhone !== phoneInput.value.trim()) return;
+    if (!challenge || !matchesRequest()) return;
     submit.disabled = true;
     try {
-      const data = {phone:requestedPhone, challenge, code:codeInput.value.trim()};
+      const data = {[requestedMethod]:requestedAddress, challenge, code:codeInput.value.trim()};
       if (recovering) data.reset_password = resetInput.value;
       else if (passwordInput.value) data.password = passwordInput.value;
       await authRequest('verify', data);
@@ -105,7 +134,7 @@ function accountForm() {
     }
   });
   byId('modal').addEventListener('close', () => clearInterval(countdown), {once:true});
-  form.append(phone, send, code, password, reset, toggle, submit, message);
+  form.append(method, address, send, code, password, reset, toggle, submit, message);
   return [form];
 }
 
@@ -134,12 +163,12 @@ function accountSettings() {
       logout.disabled = false;
     }
   });
-  return [element('p', user.phone), form, logout, status];
+  return [element('p', user.email ?? user.phone), form, logout, status];
 }
 
 accountButton.addEventListener('click', () => {
   if (!accountStatus) return;
-  openModal(accountStatus.user ? '账号设置' : '手机号登录', accountStatus.user ? accountSettings() : accountForm());
+  openModal(accountStatus.user ? '账号设置' : '登录或注册', accountStatus.user ? accountSettings() : accountForm());
 });
 
 (async () => {
@@ -147,7 +176,7 @@ accountButton.addEventListener('click', () => {
     accountStatus = await authRequest('status');
     if (!accountStatus) return;
     accountButton.hidden = false;
-    accountButton.textContent = accountStatus.user?.phone ?? '手机号登录';
+    accountButton.textContent = accountStatus.user?.email ?? accountStatus.user?.phone ?? '登录或注册';
     document.querySelectorAll('[data-cloud]').forEach(item => { item.hidden = false; });
     if (accountStatus.required && !accountStatus.user) {
       activeModule = null;
@@ -156,7 +185,7 @@ accountButton.addEventListener('click', () => {
       byId('tracing-content').hidden = true;
       byId('platform-content').hidden = false;
       byId('platform-content').replaceChildren(element('h1', '登录 AgentOps'),
-        element('p', '使用手机验证码打开你的工作区。'));
+        element('p', '获取验证码后打开你的工作区。'));
       accountButton.click();
     }
   } catch {
