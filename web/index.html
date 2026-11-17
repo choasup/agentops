@@ -4,38 +4,65 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Deck</title>
+<link rel="icon" type="image/png" href="mark.png">
 <link rel="stylesheet" href="style.css">
 <script src="app.js" defer></script>
 <script src="platform.js" defer></script>
 <script src="account.js" defer></script>
 </head>
 <body>
-<div class="shell">
+<section id="sign-in" class="sign-in" hidden>
+  <div class="sign-in-art">
+    <div class="brand"><img class="mark" src="mark.png" alt=""> Agent Deck</div>
+    <div class="deck-art" aria-hidden="true"><i></i><i></i><i></i></div>
+    <p>Models, agents, and traces in one workspace.</p>
+  </div>
+  <div class="sign-in-body">
+    <div class="sign-in-card">
+      <div class="mobile-brand brand"><img class="mark" src="mark.png" alt=""> Agent Deck</div>
+      <h1>登录 Agent Deck</h1>
+      <p>使用验证码登录或创建账号。</p>
+      <div id="sign-in-form"></div>
+    </div>
+  </div>
+</section>
+<div id="boot-screen" class="loading-page" role="status" aria-label="Loading Agent Deck">
+  <img class="mark" src="mark.png" alt="">
+</div>
+<div class="shell" id="workspace-shell" hidden>
 <aside class="sidebar">
-  <div class="brand"><span class="mark">⌁</span> Agent Deck</div>
-  <div class="workspace"><span class="avatar">S</span><div><strong>Agent Workspace</strong><small>Local workspace</small></div></div>
-  <nav aria-label="Workspace">
-    <button class="nav" data-module="agents">⌘ <span>All agents</span></button>
-    <div class="nav-label group">MONITOR</div>
-    <button class="nav" data-view="overview">◫ <span>Dashboards</span></button>
-    <button class="nav" data-view="traces">≋ <span>Traces</span></button>
-    <div class="nav-label group">EVALUATION</div>
-    <button class="nav" data-module="datasets">▤ <span>Datasets</span></button>
-    <button class="nav" data-module="experiments">◈ <span>Experiments</span></button>
-    <button class="nav" data-module="feedback">◇ <span>Review Queue</span></button>
-    <div class="nav-label group">DEVELOPMENT</div>
-    <button class="nav" data-module="models">▣ <span>Models</span></button>
-    <button class="nav" data-module="prompts">≡ <span>Prompts</span></button>
-    <button class="nav" data-module="playground">▷ <span>Playground</span></button>
-    <button class="nav" data-module="deployments">⇧ <span>Deployments</span></button>
-    <button class="nav" data-module="studio">⊞ <span>Studio</span></button>
-    <div class="nav-label group" data-cloud hidden>DEVELOPER</div>
-    <button class="nav" data-module="keys" data-cloud hidden>⌘ <span>API Keys</span></button>
+  <div class="sidebar-header">
+    <div class="brand"><img class="mark" src="mark.png" alt=""> Agent Deck</div>
+    <button id="menu-toggle" class="button menu-toggle" type="button" aria-controls="workspace-nav" aria-expanded="false">Menu</button>
+  </div>
+  <nav id="workspace-nav" aria-label="Workspace">
+    <div class="nav-label">Workspace</div>
+    <button class="nav" data-module="agents"><i class="nav-icon icon-agents" aria-hidden="true"></i><span>All agents</span></button>
+    <button class="nav" data-module="studio"><i class="nav-icon icon-play" aria-hidden="true"></i><span>Studio</span></button>
+    <button class="nav" data-module="models"><i class="nav-icon icon-model" aria-hidden="true"></i><span>Models</span></button>
+    <div class="nav-label group">Monitor</div>
+    <button class="nav" data-view="overview"><i class="nav-icon icon-chart" aria-hidden="true"></i><span>Dashboards</span></button>
+    <button class="nav" data-view="traces"><i class="nav-icon icon-traces" aria-hidden="true"></i><span>Traces</span></button>
+    <div class="nav-label group">Evaluate</div>
+    <button class="nav" data-module="datasets"><i class="nav-icon icon-dataset" aria-hidden="true"></i><span>Datasets</span></button>
+    <button class="nav" data-module="experiments"><i class="nav-icon icon-experiment" aria-hidden="true"></i><span>Experiments</span></button>
+    <button class="nav" data-module="feedback"><i class="nav-icon icon-review" aria-hidden="true"></i><span>Review queue</span></button>
+    <div class="nav-label group">Develop</div>
+    <button class="nav" data-module="prompts"><i class="nav-icon icon-prompt" aria-hidden="true"></i><span>Prompts</span></button>
+    <button class="nav" data-module="playground"><i class="nav-icon icon-play" aria-hidden="true"></i><span>Playground</span></button>
+    <button class="nav" data-module="deployments"><i class="nav-icon icon-deploy" aria-hidden="true"></i><span>Deployments</span></button>
+    <button class="nav" data-module="keys" data-cloud hidden><i class="nav-icon icon-key" aria-hidden="true"></i><span>API keys</span></button>
   </nav>
-  <div class="sidebar-foot"><span class="status-dot"></span> Local workspace</div>
+  <div class="sidebar-foot"><span class="status-dot"></span><span id="workspace-label">Workspace</span></div>
 </aside>
 <main>
-  <header class="top"><span>Workspace <b>/</b> <strong id="crumb">All agents</strong></span><div class="header-actions"><button id="account" class="button" hidden>登录或注册</button><button id="connect" class="button primary">＋ Create agent</button></div></header>
+  <header class="top">
+    <span class="breadcrumb">Workspace <b aria-hidden="true">/</b> <strong id="crumb">All agents</strong></span>
+    <div class="header-actions">
+      <button id="account" class="button account-button" hidden>登录或注册</button>
+      <button id="connect" class="button primary">＋ New agent</button>
+    </div>
+  </header>
   <div class="content" id="tracing-content" hidden>
     <div class="heading"><div><h1 id="title">Observability</h1><p id="description">Monitor performance and debug your agent runs.</p></div><label class="sr" for="project">Project</label><div class="filters"><select id="project" aria-label="Agent or tracing project"><option value="">All agents and projects</option></select><select id="environment" aria-label="Environment"><option value="">All environments</option><option value="local">Local</option><option value="development">Development</option><option value="staging">Staging</option><option value="production">Production</option></select></div></div>
     <section id="overview">
@@ -56,6 +83,13 @@
   <div class="content" id="platform-content" hidden></div>
 </main>
 </div>
-<dialog id="modal"><div class="modal-head"><h2 id="modal-title"></h2><form method="dialog"><button class="button" aria-label="Close">✕</button></form></div><div id="modal-body"></div></dialog>
+<dialog id="modal" aria-labelledby="modal-title">
+  <div class="modal-head"><h2 id="modal-title"></h2><form method="dialog"><button class="button icon-button" aria-label="Close">×</button></form></div>
+  <div id="modal-body"></div>
+</dialog>
+<dialog id="trace-inspector" class="trace-inspector" aria-labelledby="trace-title">
+  <div class="modal-head"><h2 id="trace-title"></h2><form method="dialog"><button class="button icon-button" aria-label="Close trace">×</button></form></div>
+  <div id="trace-body"></div>
+</dialog>
 </body>
 </html>

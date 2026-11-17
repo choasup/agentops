@@ -9,7 +9,7 @@ const modules = {
   playground: ['Playground', 'Test prompt versions with sample inputs.'],
   deployments: ['Deployments', 'Pin a prompt version to a local execution target.'],
   agents: ['All agents', 'Build an agent in Studio or connect one that runs in your application.'],
-  studio: ['Studio', 'Run a local agent or deployment and inspect its trace.']
+  studio: ['Studio', 'Send a test message and inspect the response and trace.']
 };
 let activeModule;
 let records = [];
@@ -138,7 +138,9 @@ async function create(module, data) {
 function renderModule(module, selectedTarget) {
   const [title, description] = modules[module];
   const heading = element('div', undefined, 'module-heading');
-  heading.append(element('h1', title), element('p', description));
+  const headingText = element('div');
+  headingText.append(element('h1', title), element('p', description));
+  heading.append(headingText);
   const panels = [];
   const nameField = () => field('name', 'Name');
   const options = kind => ofKind(kind).map(item => [item.id, item.name]);
@@ -305,90 +307,71 @@ function renderModule(module, selectedTarget) {
   }
 
   if (module === 'agents') {
-    if (ofKind('model').length) {
-      panels.push(formPanel('Build in Studio', [
-        nameField(), field('provider', 'Model', options('model')),
-        field('instructions', 'Agent instructions', 'textarea')
-      ], 'Create agent', async data => {
-        const agent = await platformRequest('/agents', {...data, source:'studio'});
-        if (!platformContent.hidden && activeModule === 'agents') await loadModule('studio', agent.id);
-      }));
-    } else {
-      const connect = element('button', 'Connect a model', 'button primary module-result');
-      connect.addEventListener('click', () => loadModule('models'));
-      const section = element('section', undefined, 'panel module-panel');
-      section.append(element('h2', 'Build in Studio'), element('p', 'Connect a model to create your first Studio agent.'), connect);
-      panels.push(section);
-    }
-    panels.push(formPanel('Connect an external agent', [nameField()], 'Create external agent',
-      data => create(module, {...data, source:'external'})));
-    gridEntries(panelForAgents());
-  }
-
-  function gridEntries(panel) {
-    panel.classList.add('wide');
-    panels.push(panel);
-  }
-
-  function panelForAgents() {
-    return listPanel('Agent registry', ofKind('agent').map(agent => {
-      const item = element('details');
-      item.append(element('summary', agent.name + ' · ' + (agent.source === 'external' ? 'External' : 'Studio')));
-      if (agent.provider) item.append(element('p', 'Model · ' + recordName(agent.provider)));
-      if (agent.identifier) {
-        item.append(element('p', 'Identifier · ' + agent.identifier));
-        const example = {
-          agent_id:agent.identifier, environment:'local', name:'handle_request',
-          input:{message:'Hello'}, output:{message:'Hi'}
-        };
-        item.append(element('p', 'POST /api/traces'), element('pre', JSON.stringify(example, null, 2)));
-        if (location.protocol === 'https:') {
-          const keys = element('button', 'Open API Keys', 'button');
-          keys.addEventListener('click', () => loadModule('keys'));
-          item.append(keys);
-        }
-      }
-      if (agent.source !== 'external') {
-        const open = element('button', 'Open in Studio', 'button');
-        open.addEventListener('click', () => loadModule('studio', agent.id));
-        item.append(open);
-        if (location.protocol === 'https:' && ofKind('model').length) {
-          const change = element('button', 'Change model', 'button');
-          change.addEventListener('click', () => {
-            const select = field('provider', 'Model', options('model'));
-            select.querySelector('select').value = agent.provider ?? '';
-            openModal(agent.name, [formPanel('Change model', [select], 'Save model', async data => {
-              await platformRequest('/agent-model', {...data, agent:agent.id});
-              byId('modal').close();
-              await loadModule('agents');
-            })]);
-          });
-          item.append(change);
-        }
-      }
-      return item;
-    }));
+    const actions = element('div', undefined, 'section-actions');
+    const models = element('button', 'Manage models', 'button');
+    models.addEventListener('click', () => loadModule('models'));
+    actions.append(models);
+    heading.append(actions);
+    panels.push(agentRegistry());
   }
 
   if (module === 'studio') {
     const targets = records.filter(record =>
       record.kind === 'deployment' || (record.kind === 'agent' && record.source !== 'external'));
-    const targetField = field('target', 'Target', targets.map(record => [record.id, record.name + ' · ' + record.kind]));
-    if (selectedTarget) targetField.querySelector('select').value = selectedTarget;
-    const messageField = field('input', 'Message or input JSON', 'textarea', 'Hello');
-    panels.push(formPanel('Run local target', [
-      targetField, messageField
-    ], 'Run in Studio', async (data, section) => {
-      const target = targets.find(record => record.id === data.target);
-      const input = target.instructions ? data.input : jsonInput(data.input);
-      const trace = await platformRequest('/runs', {...data, target_kind:target.kind, input});
-      section.querySelector('.module-result')?.remove();
-      const inspect = element('button', 'Inspect trace', 'button module-result');
-      inspect.addEventListener('click', () => showTrace(trace));
-      section.append(inspect);
-      showTrace(trace);
-      await refresh();
-    }));
+    if (!targets.length) {
+      const panel = element('section', undefined, 'panel agent-empty wide');
+      const create = element('button', 'New agent', 'button primary');
+      create.addEventListener('click', openCreateAgent);
+      panel.append(brandMark(), element('h2', 'Create an agent to start a run'),
+        element('p', 'Connect a model, give the agent instructions, and test it here.'), create);
+      panels.push(panel);
+    } else {
+      const targetField = field('target', 'Agent or deployment', targets.map(record =>
+        [record.id, record.name + (record.kind === 'deployment' ? ' · Deployment' : '')]));
+      const targetInput = targetField.querySelector('select');
+      targetInput.value = selectedTarget ?? (targets.length === 1 ? targets[0].id : '');
+      const messageField = field('input', 'Message', 'textarea');
+      const message = messageField.querySelector('textarea');
+      const info = element('p');
+      function updateTarget() {
+        const target = targets.find(record => record.id === targetInput.value);
+        const chat = target?.instructions;
+        messageField.firstChild.textContent = chat || !target ? 'Message' : 'Input JSON';
+        message.placeholder = chat || !target ? 'Send a message to your agent…' : '{"input":"Hello"}';
+        info.textContent = target?.provider ? 'Model: ' + recordName(target.provider) : '';
+      }
+      targetInput.addEventListener('change', updateTarget);
+      updateTarget();
+
+      const result = element('section', undefined, 'panel module-panel studio-result');
+      result.setAttribute('aria-live', 'polite');
+      result.append(element('h2', 'Response'), element('p', 'Run an agent to see its reply and trace.'));
+      const inputPanel = formPanel('Run input', [targetField, info, messageField], 'Run in Studio', async data => {
+        const target = targets.find(record => record.id === data.target);
+        if (!target) throw new Error('Choose an agent or deployment.');
+        const input = target.instructions ? data.input : jsonInput(data.input);
+        result.replaceChildren(element('h2', 'Response'), element('p', 'Running…'));
+        let trace;
+        try {
+          trace = await platformRequest('/runs', {...data, target_kind:target.kind, input});
+        } catch (error) {
+          result.replaceChildren(element('h2', 'Response'), element('p', error.message, 'studio-response is-error'));
+          return;
+        }
+        const failed = trace.status !== 'success';
+        const output = failed ? trace.error ?? 'Run failed' : trace.output;
+        const meta = element('div', undefined, 'trace-meta');
+        meta.append(element('span', failed ? 'Error' : 'Success', 'pill ' + trace.status),
+          element('span', latency(trace.duration), 'pill'), element('span', number.format(trace.tokens) + ' tokens', 'pill'));
+        const inspect = element('button', 'View trace', 'button');
+        inspect.addEventListener('click', () => showTrace(trace));
+        result.replaceChildren(element('h2', 'Response'), meta,
+          element('div', typeof output === 'string' ? output : JSON.stringify(output ?? null, null, 2),
+            failed ? 'studio-response is-error' : 'studio-response'), inspect);
+        await refresh();
+      });
+      panels.push(inputPanel, result);
+    }
   }
 
   const grid = element('div', undefined, 'module-grid');
@@ -396,18 +379,168 @@ function renderModule(module, selectedTarget) {
   platformContent.replaceChildren(heading, grid);
 }
 
+function brandMark() {
+  const mark = element('img', undefined, 'mark');
+  mark.src = 'mark.png';
+  mark.alt = '';
+  return mark;
+}
+
+async function openCreateAgent() {
+  const body = element('div', undefined, 'agent-mode');
+  const buttons = element('div', undefined, 'agent-mode');
+  const studio = element('button', 'Build in Studio', 'button');
+  const external = element('button', 'Connect an external agent', 'button');
+  buttons.append(studio, external);
+  const studioBody = element('div');
+  const externalBody = element('div');
+  const models = ofKind('model');
+  if (models.length) {
+    const form = formPanel('Agent configuration', [
+      field('name', 'Name'),
+      field('provider', 'Model', models.map(model => [model.id, model.name])),
+      field('instructions', 'Agent instructions', 'textarea')
+    ], 'Create agent', async data => {
+      const agent = await platformRequest('/agents', {...data, source:'studio'});
+      byId('modal').close();
+      await loadModule('studio', agent.id);
+    });
+    if (models.length === 1) form.querySelector('select').value = models[0].id;
+    studioBody.append(form);
+  } else {
+    const connect = element('button', 'Connect a model', 'button primary module-result');
+    connect.addEventListener('click', () => {
+      byId('modal').close();
+      loadModule('models');
+    });
+    studioBody.append(element('p', 'Connect a model before building a Studio agent.'), connect);
+  }
+  externalBody.append(formPanel('External agent', [field('name', 'Name')], 'Register agent', async data => {
+    await platformRequest('/agents', {...data, source:'external'});
+    byId('modal').close();
+    await loadModule('agents');
+  }));
+  function selectMode(isStudio) {
+    studio.setAttribute('aria-pressed', String(isStudio));
+    external.setAttribute('aria-pressed', String(!isStudio));
+    studioBody.hidden = !isStudio;
+    externalBody.hidden = isStudio;
+  }
+  studio.addEventListener('click', () => selectMode(true));
+  external.addEventListener('click', () => selectMode(false));
+  selectMode(true);
+  body.append(buttons, studioBody, externalBody);
+  openModal('New agent', [body]);
+}
+
+function agentSettings(agent) {
+  const controls = element('div', undefined, 'model-actions');
+  const isExternal = agent.source === 'external';
+  const currentModel = agent.provider ? recordName(agent.provider) : 'Workspace default';
+  const content = element('div', undefined, 'agent-settings');
+  if (!isExternal) content.append(element('p', 'Model: ' + currentModel));
+  if (agent.identifier) {
+    content.append(element('p', 'Trace identifier: ' + agent.identifier));
+    const example = {
+      agent_id:agent.identifier, environment:'local', name:'handle_request',
+      input:{message:'Hello'}, output:{message:'Hi'}
+    };
+    if (isExternal) content.append(payload('POST /api/traces', example));
+    if (isExternal && location.protocol === 'https:') {
+      const keys = element('button', 'Open API keys', 'button');
+      keys.addEventListener('click', () => {
+        byId('modal').close();
+        loadModule('keys');
+      });
+      controls.append(keys);
+    }
+  }
+  if (!isExternal && location.protocol === 'https:' && ofKind('model').length) {
+    const provider = field('provider', 'Model', ofKind('model').map(model => [model.id, model.name]));
+    provider.querySelector('select').value = agent.provider ?? '';
+    content.append(formPanel('Change model', [provider], 'Save model', async data => {
+      await platformRequest('/agent-model', {...data, agent:agent.id});
+      byId('modal').close();
+      await loadModule('agents');
+    }));
+  }
+  content.append(controls);
+  openModal(agent.name, [content]);
+}
+
+function agentRegistry() {
+  const agents = ofKind('agent');
+  const panel = element('section', undefined, 'panel agent-panel wide');
+  if (!agents.length) {
+    const empty = element('div', undefined, 'agent-empty');
+    const create = element('button', 'New agent', 'button primary');
+    create.addEventListener('click', openCreateAgent);
+    empty.append(brandMark(), element('h2', 'Create your first agent'),
+      element('p', 'Build a Studio agent or connect one that already runs in your application.'), create);
+    panel.append(empty);
+    return panel;
+  }
+
+  const head = element('header');
+  const heading = element('div');
+  const count = element('p');
+  const search = element('input');
+  search.type = 'search';
+  search.placeholder = 'Search agents…';
+  search.setAttribute('aria-label', 'Search agents');
+  heading.append(element('h2', 'Agent registry'), count);
+  head.append(heading, search);
+  const list = element('div', undefined, 'agent-list');
+  function draw() {
+    const query = search.value.trim().toLowerCase();
+    const filtered = agents.filter(agent => [agent.name, agent.identifier, agent.provider && recordName(agent.provider)]
+      .some(value => value?.toLowerCase().includes(query)));
+    count.textContent = number.format(filtered.length) + (filtered.length === 1 ? ' agent' : ' agents');
+    list.replaceChildren(...filtered.map(agent => {
+      const row = element('article', undefined, 'agent-row');
+      const identity = element('div', undefined, 'agent-identity');
+      const external = agent.source === 'external';
+      const avatar = element('span', Array.from(agent.name.trim())[0]?.toUpperCase() ?? 'A', 'agent-avatar');
+      avatar.setAttribute('aria-hidden', 'true');
+      const labels = element('div');
+      labels.append(element('h3', agent.name), element('p', external ? 'External agent' : 'Studio agent'));
+      identity.append(avatar, labels);
+      const actions = element('div', undefined, 'agent-actions');
+      const settings = element('button', 'Details', 'button');
+      settings.setAttribute('aria-label', 'Details for ' + agent.name);
+      settings.addEventListener('click', () => agentSettings(agent));
+      actions.append(settings);
+      if (!external) {
+        const studio = element('button', 'Open in Studio', 'button primary');
+        studio.addEventListener('click', () => loadModule('studio', agent.id));
+        actions.append(studio);
+      }
+      const model = external ? '—' : agent.provider ? recordName(agent.provider) : 'Workspace default';
+      row.append(identity, element('p', model, 'agent-model'), actions);
+      return row;
+    }));
+    if (!filtered.length) list.append(element('p', 'No matching agents.', 'empty'));
+  }
+  search.addEventListener('input', draw);
+  draw();
+  panel.append(head, list);
+  return panel;
+}
+
 async function loadModule(module, selectedTarget) {
   activeModule = module;
+  closeWorkspaceMenu();
   byId('tracing-content').hidden = true;
   platformContent.hidden = false;
   byId('crumb').textContent = modules[module][0];
-  platformContent.replaceChildren(element('p', 'Loading…'));
+  platformContent.replaceChildren(element('p', 'Loading…', 'loading'));
   document.querySelectorAll('.nav').forEach(button => {
     button.classList.toggle('active', button.dataset.module === module);
     if (button.dataset.module === module) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   });
   try {
+    if (module === 'feedback') await refresh();
     if (module === 'keys') {
       const next = await keyRequest();
       if (activeModule !== module || platformContent.hidden) return;
@@ -427,6 +560,15 @@ document.querySelectorAll('[data-module]').forEach(button => {
   button.addEventListener('click', () => loadModule(button.dataset.module));
 });
 
-byId('connect').addEventListener('click', () => loadModule('agents'));
-
-loadModule('agents');
+byId('connect').addEventListener('click', async () => {
+  const button = byId('connect');
+  button.disabled = true;
+  try {
+    records = await platformRequest();
+    await openCreateAgent();
+  } catch (error) {
+    openModal('New agent', [element('p', error.message)]);
+  } finally {
+    button.disabled = false;
+  }
+});

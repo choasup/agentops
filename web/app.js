@@ -39,39 +39,62 @@ function element(tag, value, className) {
 function openModal(title, children) {
   byId('modal-title').textContent = title;
   byId('modal-body').replaceChildren(...children);
-  byId('modal').showModal();
+  if (!byId('modal').open) byId('modal').showModal();
 }
 
 function payload(label, data) {
   const block = element('section', undefined, 'modal-section');
-  block.append(element('h2', label), element('pre', JSON.stringify(data ?? null, null, 2)));
+  const value = typeof data === 'string' ? data : JSON.stringify(data ?? null, null, 2);
+  block.append(element('h2', label), element('pre', value));
   return block;
 }
 
 function showTrace(trace) {
+  const metadata = element('div', undefined, 'trace-meta');
+  metadata.append(
+    element('span', trace.status === 'success' ? 'Success' : 'Error', 'pill ' + trace.status),
+    element('span', latency(trace.duration), 'pill'),
+    element('span', number.format(trace.tokens) + ' tokens', 'pill')
+  );
+  if (trace.environment) metadata.append(element('span', trace.environment, 'pill'));
+
   const steps = element('section', undefined, 'modal-section');
-  steps.append(element('h2', 'Runs'));
+  steps.append(element('h2', 'Execution steps'));
+  const tree = element('div', undefined, 'run-tree');
   function addSteps(container, runs) {
     for (const run of runs) {
       const item = element('details');
-      const duration = typeof run.duration === 'number' ? ' · ' + latency(run.duration) : '';
-      item.append(element('summary', [run.name, run.type].filter(Boolean).join(' · ') + duration));
+      const duration = typeof run.duration === 'number' ? latency(run.duration) : '';
+      item.append(element('summary', [run.name, run.type, duration].filter(Boolean).join(' · ')));
       for (const key of ['input', 'output', 'error']) {
-        if (key in run) item.append(payload(key, run[key]));
+        if (key in run) item.append(payload(key.charAt(0).toUpperCase() + key.slice(1), run[key]));
       }
       if (Array.isArray(run.steps)) addSteps(item, run.steps.filter(step => step && typeof step.name === 'string'));
       container.append(item);
     }
   }
-  addSteps(steps, trace.steps);
-  if (!trace.steps.length) steps.append(element('p', 'No execution steps recorded.'));
-  const children = [
-    element('p', [traceScope(trace), trace.environment, trace.status, latency(trace.duration), money(trace.cost), trace.id].filter(Boolean).join(' · ')),
-    steps, payload('Input', trace.input), payload('Output', trace.output)
-  ];
-  if ('error' in trace && trace.error !== undefined) children.push(payload('Error', trace.error));
-  openModal(trace.name, children);
+  addSteps(tree, trace.steps);
+  if (trace.steps.length) steps.append(tree);
+  else steps.append(element('p', 'No execution steps recorded.'));
+
+  const children = [metadata, element('p', traceScope(trace) + ' · ' + trace.id, 'trace-id')];
+  if (trace.error != null) children.push(payload('Error', trace.error));
+  else if (trace.output != null) children.push(payload('Output', trace.output));
+  children.push(payload('Input', trace.input), steps);
+  byId('trace-title').textContent = trace.name;
+  byId('trace-body').replaceChildren(...children);
+  if (!byId('trace-inspector').open) byId('trace-inspector').showModal();
 }
+
+function closeWorkspaceMenu() {
+  document.querySelector('.sidebar').classList.remove('menu-open');
+  byId('menu-toggle').setAttribute('aria-expanded', 'false');
+}
+
+byId('menu-toggle').addEventListener('click', () => {
+  const expanded = document.querySelector('.sidebar').classList.toggle('menu-open');
+  byId('menu-toggle').setAttribute('aria-expanded', String(expanded));
+});
 
 function renderChart(scope) {
   const days = Array.from({length: 14}, (_, index) => {
@@ -177,6 +200,7 @@ async function refresh() {
 }
 
 document.querySelectorAll('.nav[data-view]').forEach(button => button.addEventListener('click', () => {
+  closeWorkspaceMenu();
   byId('platform-content').hidden = true;
   byId('tracing-content').hidden = false;
   view = button.dataset.view;
@@ -196,6 +220,10 @@ document.querySelectorAll('.nav[data-view]').forEach(button => button.addEventLi
 
 for (const id of ['project', 'environment', 'status', 'search']) byId(id).addEventListener('input', render);
 
-render();
-refresh();
-setInterval(refresh, 5000);
+function startTraceMonitoring() {
+  render();
+  refresh();
+  setInterval(() => {
+    if (!byId('tracing-content').hidden && !document.hidden) refresh();
+  }, 5000);
+}

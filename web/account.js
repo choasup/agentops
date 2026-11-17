@@ -12,7 +12,7 @@ async function authRequest(action, data) {
 
 const accountButton = byId('account');
 
-function accountForm() {
+function accountForm(inline = false) {
   if (!accountStatus.email_configured && !accountStatus.sms_configured) {
     return [element('p', '邮箱和短信登录入口已就绪，发信服务配置完成后可获取验证码。')];
   }
@@ -52,9 +52,9 @@ function accountForm() {
   reset.hidden = true;
   const send = element('button', '获取验证码', 'button');
   send.type = 'button';
-  const toggle = element('button', '忘记密码', 'button');
+  const toggle = element('button', '忘记密码', 'button quiet');
   toggle.type = 'button';
-  const submit = element('button', '登录或注册', 'button primary');
+  const submit = element('button', '登录或注册', 'button primary auth-submit');
   submit.disabled = true;
   const message = element('p');
   message.setAttribute('role', 'status');
@@ -100,6 +100,7 @@ function accountForm() {
       requestedMethod = channel;
       submit.disabled = !matchesRequest();
       message.textContent = '验证码已发送，5 分钟内有效。';
+      codeInput.focus();
       let seconds = result.retry_after;
       send.textContent = '重新发送（' + seconds + ' 秒）';
       countdown = setInterval(() => {
@@ -133,8 +134,12 @@ function accountForm() {
       submit.disabled = false;
     }
   });
-  byId('modal').addEventListener('close', () => clearInterval(countdown), {once:true});
-  form.append(method, address, send, code, password, reset, toggle, submit, message);
+  if (!inline) byId('modal').addEventListener('close', () => clearInterval(countdown), {once:true});
+  const row = element('div', undefined, 'auth-send-row');
+  row.append(address, send);
+  const actions = element('div', undefined, 'auth-actions');
+  actions.append(toggle);
+  form.append(method, row, code, password, reset, submit, actions, message);
   return [form];
 }
 
@@ -171,24 +176,31 @@ accountButton.addEventListener('click', () => {
   openModal(accountStatus.user ? '账号设置' : '登录或注册', accountStatus.user ? accountSettings() : accountForm());
 });
 
-(async () => {
+async function boot() {
   try {
     accountStatus = await authRequest('status');
-    if (!accountStatus) return;
-    accountButton.hidden = false;
-    accountButton.textContent = accountStatus.user?.email ?? accountStatus.user?.phone ?? '登录或注册';
-    document.querySelectorAll('[data-cloud]').forEach(item => { item.hidden = false; });
-    if (accountStatus.required && !accountStatus.user) {
-      activeModule = null;
-      document.querySelector('.sidebar nav').hidden = true;
-      byId('connect').hidden = true;
-      byId('tracing-content').hidden = true;
-      byId('platform-content').hidden = false;
-      byId('platform-content').replaceChildren(element('h1', '登录 Agent Deck'),
-        element('p', '获取验证码后打开你的工作区。'));
-      accountButton.click();
+    if (accountStatus) {
+      accountButton.hidden = false;
+      accountButton.textContent = accountStatus.user?.email ?? accountStatus.user?.phone ?? '登录或注册';
+      document.querySelectorAll('[data-cloud]').forEach(item => { item.hidden = false; });
+      if (accountStatus.required && !accountStatus.user) {
+        byId('sign-in-form').replaceChildren(...accountForm(true));
+        byId('sign-in').hidden = false;
+        return;
+      }
     }
-  } catch {
-    // The Python preview does not serve Cloudflare account APIs.
+    byId('workspace-label').textContent = accountStatus?.user ? 'Personal workspace' : 'Local workspace';
+    byId('workspace-shell').hidden = false;
+    startTraceMonitoring();
+    await loadModule('agents');
+  } catch (error) {
+    const retry = element('button', 'Retry', 'button primary');
+    retry.addEventListener('click', boot, {once:true});
+    byId('boot-screen').replaceChildren(element('p', error.message), retry);
+    return;
+  } finally {
+    byId('boot-screen').hidden = !byId('workspace-shell').hidden || !byId('sign-in').hidden;
   }
-})();
+}
+
+boot();
