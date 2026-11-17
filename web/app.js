@@ -1,30 +1,6 @@
 const byId = id => document.getElementById(id);
 const number = new Intl.NumberFormat();
-const demoNames = ['support_agent', 'research_assistant', 'document_qa', 'summarize_ticket'];
-const demo = Array.from({length: 14}, (_, day) => {
-  const at = new Date();
-  at.setDate(at.getDate() - day);
-  return Array.from({length: [16, 27, 22, 31, 35, 23, 29][day % 7] + (day % 3) * 3}, (_, index) => {
-    const name = demoNames[(day + index) % demoNames.length];
-    const error = (day * 13 + index) % 23 === 0;
-    const input = {query: 'How do I update my billing details?'};
-    const output = {answer: 'Open Settings, then select Billing.'};
-    const duration = 750 + ((day + 1) * (index + 17) * 137) % 2300;
-    return {
-      id: 'demo-' + day + '-' + index, name, project: index % 4 ? 'customer-support' : 'knowledge-base',
-      at: at.toISOString(), status: error ? 'error' : 'success', duration,
-      tokens: 420 + index * 31, cost: (420 + index * 31) * 0.000004,
-      input, output: error ? null : output, error: error ? 'Upstream model request timed out' : undefined,
-      steps: [
-        {name: 'retrieve_documents', type: 'retriever', duration: 180, input, output: {documents: 3}},
-        {name: 'generate_response', type: 'llm', duration: duration - 180, output: error ? null : output,
-          error: error ? 'Upstream model request timed out' : undefined}
-      ]
-    };
-  });
-}).flat();
-
-let traces = demo;
+let traces = [];
 let view = 'overview';
 let scopedAgent;
 let tracesReady = false;
@@ -36,6 +12,24 @@ function element(tag, value, className) {
   if (value !== undefined) node.textContent = value;
   if (className) node.className = className;
   return node;
+}
+
+function icon(name) {
+  const namespace = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(namespace, 'svg');
+  svg.setAttribute('class', 'ui-icon');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('focusable', 'false');
+  const use = document.createElementNS(namespace, 'use');
+  use.setAttribute('href', 'icons.svg#' + name);
+  svg.append(use);
+  return svg;
+}
+
+function iconButton(name, label, className = 'button') {
+  const button = element('button', undefined, className);
+  button.append(icon(name), element('span', label));
+  return button;
 }
 
 function openModal(title, children) {
@@ -72,13 +66,13 @@ function showTrace(trace, linked = false) {
   const summary = element('div', undefined, 'inspector-summary');
   const identity = element('div');
   identity.append(metadata, element('p', traceScope(trace) + ' · ' + trace.id, 'trace-id'));
-  const link = element('button', 'Copy link', 'button');
+  const link = iconButton('copy', 'Copy link');
   const shareUrl = new URL('/', location.origin);
   shareUrl.searchParams.set('trace', trace.id);
   link.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(shareUrl.href);
-      link.textContent = 'Copied';
+      link.querySelector('span').textContent = 'Copied';
     } catch {
       const field = element('input');
       field.readOnly = true;
@@ -156,8 +150,9 @@ function showTrace(trace, linked = false) {
     const button = element('button', undefined, 'step-row');
     button.style.setProperty('--depth', Math.min(depth, 8));
     const name = element('span', run === trace ? 'Trace overview' : run.name, 'step-name');
-    const status = element('i', undefined, 'step-dot ' + runStatus(run));
-    status.setAttribute('aria-hidden', 'true');
+    const failed = runStatus(run) === 'error';
+    const status = element('span', undefined, 'step-state ' + (failed ? 'error' : 'success'));
+    status.append(icon(failed ? 'error' : 'check'), element('span', failed ? 'Error' : 'Success', 'sr'));
     const time = typeof run.duration === 'number' ? latency(run.duration) : '—';
     button.append(status, name, element('span', time, 'step-time'));
     button.addEventListener('click', () => select(run, button));
@@ -202,8 +197,12 @@ function renderChart(scope) {
   const lookup = new Map(days.map(day => [day.date.toDateString(), day]));
   for (const trace of scope) {
     const day = lookup.get(new Date(trace.at).toDateString());
-    if (day) day[trace.status]++;
+    if (day && ['error','success'].includes(trace.status)) day[trace.status]++;
   }
+  const hasActivity = days.some(day => day.success + day.error > 0);
+  byId('trace-graph').hidden = !hasActivity;
+  byId('trace-chart-empty').hidden = hasActivity;
+  if (!hasActivity) return;
   const max = Math.max(4, Math.ceil(Math.max(...days.map(day => day.success + day.error)) / 4) * 4);
   byId('axis').replaceChildren(...[1, .75, .5, .25, 0].map(part => element('span', max * part)));
   byId('bars').replaceChildren(...days.map(day => {
@@ -242,7 +241,7 @@ function render() {
   const ratio = scope.length ? 100 * scope.filter(trace => trace.status === 'error').length / scope.length : 0;
   const metrics = [
     ['Total traces', number.format(scope.length)],
-    ['Error rate', ratio.toFixed(1) + '%'],
+    ['Error rate', scope.length ? ratio.toFixed(1) + '%' : '—'],
     ['P95 latency', p95 === undefined ? '—' : latency(p95)],
     ['Total cost', money(scope.reduce((sum, trace) => sum + trace.cost, 0))]
   ];
@@ -260,8 +259,7 @@ function render() {
       .some(value => value?.toLowerCase().includes(query)))
   );
   const limit = view === 'overview' ? 8 : filtered.length;
-  byId('count').textContent = number.format(Math.min(limit, filtered.length)) + ' of ' + number.format(filtered.length) +
-    (traces === demo ? ' demo runs' : ' runs');
+  byId('count').textContent = number.format(Math.min(limit, filtered.length)) + ' of ' + number.format(filtered.length) + ' runs';
   const rows = filtered.slice(0, limit).map(trace => {
     const row = element('tr');
     const open = element('button', trace.name, 'trace');
@@ -278,7 +276,7 @@ function render() {
   });
   if (!rows.length) {
     const row = element('tr');
-    const cell = element('td', 'No matching traces', 'empty');
+    const cell = element('td', traces.length ? 'No matching traces' : 'No traces yet. Run an agent in Studio or send a trace through the API.', 'empty');
     cell.colSpan = 8;
     row.append(cell);
     rows.push(row);
@@ -293,7 +291,7 @@ async function refresh() {
     const response = await fetch('/api/traces', {cache: 'no-store'});
     if (!response.ok) throw new Error('Trace API unavailable');
     const saved = await response.json();
-    traces = saved.length ? saved : demo;
+    traces = saved;
     tracesReady = true;
     updateTraceProjects();
     byId('notice').textContent = '';

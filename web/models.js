@@ -1,19 +1,21 @@
 const modelProviders = {
   deepseek: {name:'DeepSeek', icon:'providers/deepseek.svg', url:'https://api.deepseek.com/chat/completions', model:'deepseek-v4-flash'},
   bailian: {name:'Alibaba Cloud Bailian', icon:'providers/bailian.svg', url:'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', model:'qwen-plus'},
-  custom: {name:'OpenAI-compatible', mark:'<>', url:'', model:''}
+  custom: {name:'OpenAI-compatible', glyph:'terminal', url:'', model:''}
 };
 const modelFilters = {query:'', provider:''};
 
 function providerMark(vendor) {
   const provider = modelProviders[vendor] ?? modelProviders.custom;
-  const mark = element('span', provider.mark, 'provider-mark ' + vendor);
+  const mark = element('span', undefined, 'provider-mark ' + vendor);
   mark.setAttribute('aria-hidden', 'true');
   if (provider.icon) {
     const image = element('img');
     image.src = provider.icon;
     image.alt = '';
     mark.append(image);
+  } else {
+    mark.append(icon(provider.glyph));
   }
   return mark;
 }
@@ -34,7 +36,8 @@ function providerCards() {
     const text = element('span');
     text.append(element('strong', provider.name), element('small', provider.model || 'Your endpoint'));
     identity.append(providerMark(vendor), text);
-    const action = element('span', 'Connect →', 'provider-action');
+    const action = element('span', 'Connect', 'provider-action');
+    action.append(icon('arrow'));
     card.append(identity, action);
     card.addEventListener('click', () => showModelEditor(null, vendor));
     grid.append(card);
@@ -120,7 +123,7 @@ function showModelDetail(model, test = false) {
   const overviewPanel = element('div');
   const controls = element('div', undefined, 'model-actions');
   if (location.protocol === 'https:') {
-    const edit = element('button', 'Edit connection', 'button');
+    const edit = iconButton('edit', 'Edit connection');
     edit.addEventListener('click', () => showModelEditor(model));
     controls.append(edit);
     const removal = element('details', undefined, 'model-removal');
@@ -258,7 +261,7 @@ function modelsWorkspace() {
       identity.append(providerMark(vendor), text);
       const row = element('tr');
       const agentCount = usage.get(model.id) ?? 0;
-      const test = element('button', 'Test', 'button');
+      const test = iconButton('play', 'Test');
       test.setAttribute('aria-label', 'Test ' + model.name);
       test.addEventListener('click', () => showModelDetail(model, true));
       for (const value of [

@@ -34,25 +34,25 @@
 <aside class="sidebar">
   <div class="sidebar-header">
     <div class="brand"><img class="mark" src="mark.png" alt=""> Agent Deck</div>
-    <button id="menu-toggle" class="button menu-toggle" type="button" aria-controls="workspace-nav" aria-expanded="false">Menu</button>
+    <button id="menu-toggle" class="button menu-toggle" type="button" aria-controls="workspace-nav" aria-expanded="false"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#menu"/></svg><span>Menu</span></button>
   </div>
   <nav id="workspace-nav" aria-label="Workspace">
     <div class="nav-label">Workspace</div>
-    <button class="nav" data-module="agents"><i class="nav-icon icon-agents" aria-hidden="true"></i><span>All agents</span></button>
-    <button class="nav" data-module="studio"><i class="nav-icon icon-play" aria-hidden="true"></i><span>Studio</span></button>
-    <button class="nav" data-module="models"><i class="nav-icon icon-model" aria-hidden="true"></i><span>Models</span></button>
+    <button class="nav" data-module="agents"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#agents"/></svg><span>All agents</span></button>
+    <button class="nav" data-module="studio"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#studio"/></svg><span>Studio</span></button>
+    <button class="nav" data-module="models"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#models"/></svg><span>Models</span></button>
     <div class="nav-label group">Monitor</div>
-    <button class="nav" data-view="overview"><i class="nav-icon icon-chart" aria-hidden="true"></i><span>Dashboards</span></button>
-    <button class="nav" data-view="traces"><i class="nav-icon icon-traces" aria-hidden="true"></i><span>Traces</span></button>
+    <button class="nav" data-view="overview"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#chart"/></svg><span>Dashboards</span></button>
+    <button class="nav" data-view="traces"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#traces"/></svg><span>Traces</span></button>
     <div class="nav-label group">Evaluate</div>
-    <button class="nav" data-module="datasets"><i class="nav-icon icon-dataset" aria-hidden="true"></i><span>Datasets</span></button>
-    <button class="nav" data-module="experiments"><i class="nav-icon icon-experiment" aria-hidden="true"></i><span>Experiments</span></button>
-    <button class="nav" data-module="feedback"><i class="nav-icon icon-review" aria-hidden="true"></i><span>Review queue</span></button>
+    <button class="nav" data-module="datasets"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#database"/></svg><span>Datasets</span></button>
+    <button class="nav" data-module="experiments"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#experiment"/></svg><span>Experiments</span></button>
+    <button class="nav" data-module="feedback"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#review"/></svg><span>Review queue</span></button>
     <div class="nav-label group">Develop</div>
-    <button class="nav" data-module="prompts"><i class="nav-icon icon-prompt" aria-hidden="true"></i><span>Prompts</span></button>
-    <button class="nav" data-module="playground"><i class="nav-icon icon-play" aria-hidden="true"></i><span>Playground</span></button>
-    <button class="nav" data-module="deployments"><i class="nav-icon icon-deploy" aria-hidden="true"></i><span>Deployments</span></button>
-    <button class="nav" data-module="keys" data-cloud hidden><i class="nav-icon icon-key" aria-hidden="true"></i><span>API keys</span></button>
+    <button class="nav" data-module="prompts"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#prompt"/></svg><span>Prompts</span></button>
+    <button class="nav" data-module="playground"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#terminal"/></svg><span>Playground</span></button>
+    <button class="nav" data-module="deployments"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#deploy"/></svg><span>Deployments</span></button>
+    <button class="nav" data-module="keys" data-cloud hidden><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#key"/></svg><span>API keys</span></button>
   </nav>
   <div class="sidebar-foot"><span class="status-dot"></span><span id="workspace-label">Workspace</span></div>
 </aside>
@@ -61,7 +61,7 @@
     <span class="breadcrumb">Workspace <b aria-hidden="true">/</b> <strong id="crumb">All agents</strong></span>
     <div class="header-actions">
       <button id="account" class="button account-button" hidden>登录或注册</button>
-      <button id="connect" class="button primary">＋ New agent</button>
+      <button id="connect" class="button primary"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#plus"/></svg><span>New agent</span></button>
     </div>
   </header>
   <div class="content" id="tracing-content" hidden>
@@ -70,7 +70,8 @@
       <div class="metrics" id="metrics"></div>
       <div class="panel chart-panel">
         <div class="panel-head"><div><h2>Trace volume</h2><p>Daily runs over the last 14 days</p></div><div class="legend"><i></i> Successful <i></i> Error</div></div>
-        <div class="graph"><div id="axis" class="axis"></div><div id="bars" class="bars"></div></div>
+        <div id="trace-chart-empty" class="chart-empty" hidden><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#chart"/></svg><p>No traces in the last 14 days.</p></div>
+        <div class="graph" id="trace-graph"><div id="axis" class="axis"></div><div id="bars" class="bars"></div></div>
       </div>
     </section>
     <section class="panel table-panel">
@@ -85,11 +86,11 @@
 </main>
 </div>
 <dialog id="modal" aria-labelledby="modal-title">
-  <div class="modal-head"><h2 id="modal-title"></h2><form method="dialog"><button class="button icon-button" aria-label="Close">×</button></form></div>
+  <div class="modal-head"><h2 id="modal-title"></h2><form method="dialog"><button class="button icon-button" aria-label="Close"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#close"/></svg></button></form></div>
   <div id="modal-body"></div>
 </dialog>
 <dialog id="trace-inspector" class="trace-inspector" aria-labelledby="trace-title">
-  <div class="modal-head"><h2 id="trace-title"></h2><form method="dialog"><button class="button icon-button" aria-label="Close trace">×</button></form></div>
+  <div class="modal-head"><h2 id="trace-title"></h2><form method="dialog"><button class="button icon-button" aria-label="Close trace"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#close"/></svg></button></form></div>
   <div id="trace-body"></div>
 </dialog>
 </body>

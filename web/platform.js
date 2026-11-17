@@ -6,7 +6,7 @@ const modules = {
   experiments: ['Experiments', 'Evaluate prompt versions against a dataset and compare scores.'],
   feedback: ['Review Queue', 'Score ingested traces and record reviewer feedback.'],
   prompts: ['Prompts', 'Save and reuse prompt template versions.'],
-  playground: ['Playground', 'Test prompt versions with sample inputs.'],
+  playground: ['Playground', 'Test prompt versions with your inputs.'],
   deployments: ['Deployments', 'Pin a prompt version to a local execution target.'],
   agents: ['All agents', 'Build an agent in Studio or connect one that runs in your application.'],
   studio: ['Studio', 'Send a test message and inspect the response and trace.']
@@ -56,7 +56,9 @@ function traceLink(id) {
 }
 
 function billingPanels() {
-  const balance = listPanel('Account balance', [element('strong', billingMoney(billing.balance_nanos))]);
+  const amount = element('strong', undefined, 'balance-amount');
+  amount.append(icon('wallet'), element('span', billingMoney(billing.balance_nanos)));
+  const balance = listPanel('Account balance', [amount]);
   if (billing.reserved_nanos) balance.append(element('p', billingMoney(billing.reserved_nanos) + ' reserved for active requests'));
   const returned = new URL(location.href).searchParams.get('checkout');
   if (returned === 'complete') balance.append(element('p', 'Balance updates when payment is confirmed. Refresh to check the ledger.'));
@@ -92,7 +94,7 @@ function hostedModelPanel() {
     element('span', billing.model_available ? 'Available' : 'Unavailable', 'pill'));
   const price = element('p', billingMoney(billing.prices.cached * 1e6) + ' cached input · ' +
     billingMoney(billing.prices.input * 1e6) + ' input · ' + billingMoney(billing.prices.output * 1e6) + ' output per 1M tokens');
-  const keys = element('button', 'Manage balance and API keys', 'button');
+  const keys = iconButton('key', 'Manage balance and API keys', 'button');
   keys.addEventListener('click', () => loadModule('keys'));
   const panel = listPanel('Hosted models', [identity, price, keys]);
   panel.classList.add('wide');
@@ -194,10 +196,10 @@ function renderModule(module, selectedTarget) {
   const nameField = () => field('name', 'Name');
   const options = kind => ofKind(kind).map(item => [item.id, item.name]);
   const promptField = () => field('prompt', 'Prompt version', promptOptions());
-  const inputField = () => field('input', 'Input JSON', 'textarea', '{"input":"Hello"}');
+  const inputField = () => field('input', 'Input JSON', 'textarea');
 
   if (module === 'models') {
-    const connect = element('button', '+ Add model', 'button primary');
+    const connect = iconButton('plus', 'Add model', 'button primary');
     connect.addEventListener('click', chooseModelProvider);
     heading.append(connect);
     if (billing) panels.push(hostedModelPanel());
@@ -225,10 +227,10 @@ function renderModule(module, selectedTarget) {
       if (activeModule !== 'keys' || platformContent.hidden) return;
       await loadModule('keys');
       const value = element('pre', key.token);
-      const copy = element('button', 'Copy API key', 'button primary');
+      const copy = iconButton('copy', 'Copy API key', 'button primary');
       copy.addEventListener('click', async () => {
-        try { await navigator.clipboard.writeText(key.token); copy.textContent = 'Copied'; }
-        catch { copy.textContent = 'Select and copy the key above'; }
+        try { await navigator.clipboard.writeText(key.token); copy.querySelector('span').textContent = 'Copied'; }
+        catch { copy.querySelector('span').textContent = 'Select and copy the key above'; }
       });
       openModal('API key created', [
         element('p', 'Copy this key now. It is displayed once.'), value, copy
@@ -269,7 +271,7 @@ function renderModule(module, selectedTarget) {
     panels.push(formPanel('Create dataset', [nameField()], 'Create dataset', data => create(module, data)));
     if (ofKind('dataset').length) panels.push(formPanel('Add example', [
       field('dataset', 'Dataset', options('dataset')), inputField(),
-      field('expected', 'Reference output JSON', 'textarea', '"Hello"')
+      field('expected', 'Reference output JSON', 'textarea')
     ], 'Add example', data => create('examples', {...data, input:jsonInput(data.input), expected:jsonInput(data.expected)})));
     panels.push(listPanel('Datasets', ofKind('dataset').map(dataset => {
       const examples = ofKind('example').filter(item => item.dataset === dataset.id);
@@ -298,9 +300,8 @@ function renderModule(module, selectedTarget) {
   }
 
   if (module === 'feedback') {
-    const available = traces.filter(trace => !trace.id.startsWith('demo-'));
-    panels.push(formPanel('Record feedback', [
-      field('trace', 'Trace', available.map(trace => [trace.id, trace.name + ' · ' + trace.project + ' · ' + trace.id.slice(0, 8)])),
+      panels.push(formPanel('Record feedback', [
+      field('trace', 'Trace', traces.map(trace => [trace.id, trace.name + ' · ' + trace.project + ' · ' + trace.id.slice(0, 8)])),
       field('score', 'Score', [['1', 'Pass'], ['0', 'Fail']]), field('comment', 'Comment', 'textarea')
     ], 'Save feedback', data => create(module, {...data, score:Number(data.score)})));
     panels.push(listPanel('Reviewed traces', ofKind('feedback').map(record =>
@@ -324,7 +325,7 @@ function renderModule(module, selectedTarget) {
 
   if (module === 'agents') {
     const actions = element('div', undefined, 'section-actions');
-    const models = element('button', 'Manage models', 'button');
+    const models = iconButton('models', 'Manage models', 'button');
     models.addEventListener('click', () => loadModule('models'));
     actions.append(models);
     heading.append(actions);
@@ -352,8 +353,8 @@ function brandMark() {
 async function openCreateAgent() {
   const body = element('div', undefined, 'agent-mode');
   const buttons = element('div', undefined, 'agent-mode');
-  const studio = element('button', 'Build in Studio', 'button');
-  const external = element('button', 'Connect an external agent', 'button');
+  const studio = iconButton('studio', 'Build in Studio', 'button');
+  const external = iconButton('external', 'Connect an external agent', 'button');
   buttons.append(studio, external);
   const studioBody = element('div');
   const externalBody = element('div');
@@ -371,7 +372,7 @@ async function openCreateAgent() {
     if (models.length === 1) form.querySelector('select').value = models[0][0];
     studioBody.append(form);
   } else {
-    const connect = element('button', 'Connect a model', 'button primary module-result');
+    const connect = iconButton('models', 'Connect a model', 'button primary module-result');
     connect.addEventListener('click', () => {
       byId('modal').close();
       loadModule('models');
@@ -410,7 +411,7 @@ function agentSettings(agent, returnTo = 'agents') {
     };
     if (isExternal) content.append(payload('POST /api/traces', example));
     if (isExternal && location.protocol === 'https:') {
-      const keys = element('button', 'Open API keys', 'button');
+      const keys = iconButton('key', 'Open API keys', 'button');
       keys.addEventListener('click', () => {
         byId('modal').close();
         loadModule('keys');
@@ -435,7 +436,7 @@ function agentSettings(agent, returnTo = 'agents') {
 function studioWorkspace(targets, selectedTarget) {
   if (!targets.length) {
     const panel = element('section', undefined, 'panel agent-empty wide');
-    const create = element('button', 'New agent', 'button primary');
+    const create = iconButton('plus', 'New agent', 'button primary');
     create.addEventListener('click', openCreateAgent);
     panel.append(brandMark(), element('h2', 'Create an agent to start a run'),
       element('p', 'Connect a model, give the agent instructions, and test it here.'), create);
@@ -450,7 +451,7 @@ function studioWorkspace(targets, selectedTarget) {
   targetInput.value = selectedTarget ?? lastStudioTarget ?? targets[0].id;
   if (!targetInput.value) targetInput.value = targets[0].id;
   const model = element('span', undefined, 'studio-model');
-  const configure = element('button', 'Configuration', 'button');
+  const configure = iconButton('settings', 'Configuration', 'button');
   toolbar.append(selector, model, configure);
 
   const split = element('div', undefined, 'studio-split');
@@ -466,7 +467,7 @@ function studioWorkspace(targets, selectedTarget) {
   const billingField = field('billing_key', 'Charge to API key', availableKeys.map(key => [key.id, key.name]));
   const billingInput = billingField.querySelector('select');
   if (availableKeys.length === 1) billingInput.value = availableKeys[0].id;
-  const manageKeys = element('button', 'Manage balance and API keys', 'button');
+  const manageKeys = iconButton('key', 'Manage balance and API keys', 'button');
   manageKeys.type = 'button';
   manageKeys.addEventListener('click', () => loadModule('keys'));
   const message = element('textarea');
@@ -475,7 +476,7 @@ function studioWorkspace(targets, selectedTarget) {
   const messageLabel = element('label', 'Message', 'sr');
   message.id = 'studio-message';
   messageLabel.htmlFor = message.id;
-  const send = element('button', 'Run', 'button primary');
+  const send = iconButton('play', 'Run', 'button primary');
   const hint = element('p', 'Each run is independent.');
   const formFooter = element('div', undefined, 'composer-footer');
   formFooter.append(hint, manageKeys, send);
@@ -507,7 +508,7 @@ function studioWorkspace(targets, selectedTarget) {
       message.value = '';
     }
     messageLabel.textContent = target.instructions ? 'Message' : 'Input JSON';
-    message.placeholder = target.instructions ? 'Send a test message…' : '{"input":"Hello"}';
+    message.placeholder = target.instructions ? 'Send a test message…' : 'Enter JSON input…';
     draw();
   };
   targetInput.addEventListener('change', () => selectTarget());
@@ -515,7 +516,7 @@ function studioWorkspace(targets, selectedTarget) {
 
   function recentRuns() {
     const target = current();
-    const saved = traces === demo ? [] : traces.filter(trace => trace.target_id === target.id ||
+    const saved = traces.filter(trace => trace.target_id === target.id ||
       (!trace.target_id && target.identifier && trace.agent_id === target.identifier &&
         trace.environment === 'local' && ['llm', 'template'].includes(trace.type)));
     if (requestTrace && !saved.some(run => run.id === requestTrace.id)) saved.unshift(requestTrace);
@@ -561,9 +562,9 @@ function studioWorkspace(targets, selectedTarget) {
     header.append(element('h3', failed ? 'Run failed' : 'Response'), statusPill(runStatus(run)),
       element('span', latency(run.duration) + ' · ' + number.format(run.tokens) + ' tokens', 'step-time'));
     const actions = element('div', undefined, 'section-actions');
-    const inspect = element('button', 'View trace', 'button');
+    const inspect = iconButton('traces', 'View trace', 'button');
     inspect.addEventListener('click', () => showTrace(run));
-    const reuse = element('button', 'Reuse input', 'button quiet');
+    const reuse = iconButton('copy', 'Reuse input', 'button quiet');
     reuse.addEventListener('click', () => {
       message.value = current().instructions && typeof run.input === 'string' ? run.input : JSON.stringify(run.input ?? null, null, 2);
       message.focus();
@@ -630,7 +631,7 @@ function agentRegistry() {
   const panel = element('section', undefined, 'panel agent-panel wide');
   if (!agents.length) {
     const empty = element('div', undefined, 'agent-empty');
-    const create = element('button', 'New agent', 'button primary');
+    const create = iconButton('plus', 'New agent', 'button primary');
     create.addEventListener('click', openCreateAgent);
     empty.append(brandMark(), element('h2', 'Create your first agent'),
       element('p', 'Build a Studio agent or connect one that already runs in your application.'), create);
@@ -672,7 +673,6 @@ function agentRegistry() {
   function stats() {
     const oneWeekAgo = Date.now() - 7 * 86400000;
     const map = new Map();
-    if (traces === demo) return map;
     for (const trace of traces) {
       if (!trace.agent_id) continue;
       const time = Date.parse(trace.at);
@@ -705,8 +705,8 @@ function agentRegistry() {
       const row = element('tr');
       const external = agent.source === 'external';
       const identity = element('div', undefined, 'agent-identity');
-      const avatar = element('span', Array.from(agent.name.trim())[0]?.toUpperCase() ?? 'A', 'agent-avatar');
-      avatar.setAttribute('aria-hidden', 'true');
+      const avatar = element('span', undefined, 'agent-avatar');
+      avatar.append(icon(external ? 'external' : 'agents'));
       const labels = element('div');
       const details = element('button', agent.name, 'agent-name');
       details.addEventListener('click', () => agentSettings(agent));
@@ -714,13 +714,13 @@ function agentRegistry() {
       identity.append(avatar, labels);
       const actions = element('div', undefined, 'agent-actions');
       if (agent.identifier) {
-        const openTraces = element('button', 'Traces', 'button quiet');
+        const openTraces = iconButton('traces', 'Traces', 'button quiet');
         openTraces.setAttribute('aria-label', 'View traces for ' + agent.name);
         openTraces.addEventListener('click', () => openAgentTraces(agent));
         actions.append(openTraces);
       }
       if (!external) {
-        const studio = element('button', 'Open Studio', 'button');
+        const studio = iconButton('studio', 'Open Studio', 'button');
         studio.setAttribute('aria-label', 'Open ' + agent.name + ' in Studio');
         studio.addEventListener('click', () => loadModule('studio', agent.id));
         actions.append(studio);

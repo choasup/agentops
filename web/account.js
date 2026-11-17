@@ -181,7 +181,8 @@ async function boot() {
     accountStatus = await authRequest('status');
     if (accountStatus) {
       accountButton.hidden = false;
-      accountButton.textContent = accountStatus.user?.email ?? accountStatus.user?.phone ?? '登录或注册';
+      accountButton.replaceChildren(icon('user'),
+        element('span', accountStatus.user?.email ?? accountStatus.user?.phone ?? '登录或注册'));
       document.querySelectorAll('[data-cloud]').forEach(item => { item.hidden = false; });
       if (accountStatus.required && !accountStatus.user) {
         byId('sign-in-form').replaceChildren(...accountForm(true));
