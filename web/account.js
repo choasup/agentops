@@ -184,7 +184,7 @@ accountButton.addEventListener('click', () => {
       byId('connect').hidden = true;
       byId('tracing-content').hidden = true;
       byId('platform-content').hidden = false;
-      byId('platform-content').replaceChildren(element('h1', '登录 AgentOps'),
+      byId('platform-content').replaceChildren(element('h1', '登录智能体工坊'),
         element('p', '获取验证码后打开你的工作区。'));
       accountButton.click();
     }

@@ -185,9 +185,9 @@ export class Accounts extends DurableObject {
         const hashed = await emailCodeDigest(this.env.AGENTOPS_INGEST_TOKEN, challenge, identity, code);
         this.sql.exec('INSERT INTO email_codes VALUES (?,?,?)', challenge, hashed, now + challengeAge);
         await this.env.AUTH_EMAIL.send({
-          to:identity, from:{email:this.env.LOGIN_FROM, name:'AgentOps'},
-          subject:'AgentOps 登录验证码',
-          text:'你的 AgentOps 登录验证码是 ' + code + '，5 分钟内有效。若你未请求此验证码，可忽略这封邮件。'
+          to:identity, from:{email:this.env.LOGIN_FROM, name:'智能体工坊'},
+          subject:'智能体工坊登录验证码',
+          text:'你的智能体工坊登录验证码是 ' + code + '，5 分钟内有效。若你未请求此验证码，可忽略这封邮件。'
         });
       } else {
         const result = await smsRequest(this.env, 'SendSmsVerifyCode', {

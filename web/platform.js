@@ -242,7 +242,7 @@ function renderModule(module, selectedTarget) {
       return item;
     })));
     panels.push(listPanel('Use the API', [
-      element('p', 'Send an Authorization: Bearer header with your AgentOps key.'),
+      element('p', 'Send an Authorization: Bearer header with your workspace API key.'),
       element('pre', 'GET /api/agents\nPOST /api/platform/runs\nGET /api/traces\nPOST /api/traces')
     ]));
   }
