@@ -115,7 +115,7 @@ function showTrace(trace, linked = false) {
         ['ID', run.id ?? '—']
       ];
       if (run.model) items.splice(1, 0, ['Model', run.model]);
-      if (run.key_id && typeof run.cost_nanos === 'number') {
+      if (run === trace && run.key_id && typeof run.cost_nanos === 'number') {
         items.push(['API Key ID', run.key_id], ['Charge', billingMoney(run.cost_nanos)]);
       }
       for (const [key, value] of items) details.append(element('dt', key), element('dd', value));

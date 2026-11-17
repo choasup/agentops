@@ -304,6 +304,8 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError('Expected a JSON object')
             if self.path.startswith('/api/platform/'):
                 return self.respond(201, self.platform_action(self.path.rsplit('/', 1)[-1], trace))
+            trace.pop('cost_nanos', None)
+            trace.pop('key_id', None)
             if 'agent_id' in trace or 'environment' in trace:
                 identifier = trace.get('agent_id')
                 environment = trace.get('environment')

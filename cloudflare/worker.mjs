@@ -228,7 +228,8 @@ export class Workspace extends DurableObject {
   }
 
   ingest(data) {
-    const trace = {project:'default', status:'success', duration:0, tokens:0, cost:0, steps:[], ...data};
+    const {cost_nanos, key_id, ...reported} = data;
+    const trace = {project:'default', status:'success', duration:0, tokens:0, cost:0, steps:[], ...reported};
     trace.name = requiredText(trace, 'name');
     trace.project = requiredText(trace, 'project');
     if ('agent_id' in trace || 'environment' in trace) {
