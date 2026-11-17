@@ -53,7 +53,10 @@ function allowedScope(path, method) {
 
 export default {
   async fetch(request, env) {
-    const {pathname, origin} = new URL(request.url);
+    const {hostname, pathname, search, origin} = new URL(request.url);
+    if (hostname === 'agentops.cloudmoro.com') {
+      return Response.redirect('https://agentdeck.cloudmoro.com' + pathname + search, 308);
+    }
     if (pathname === '/healthz' && request.method === 'GET') return json({status:'ok'});
 
     const guest = cookieValue(request, workspaceCookie);

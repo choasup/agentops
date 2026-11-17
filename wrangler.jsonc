@@ -4,7 +4,10 @@
   "compatibility_date": "2026-11-17",
   "workers_dev": false,
   "preview_urls": false,
-  "routes": [{"pattern": "agentops.cloudmoro.com", "custom_domain": true}],
+  "routes": [
+    {"pattern": "agentdeck.cloudmoro.com", "custom_domain": true},
+    {"pattern": "agentops.cloudmoro.com", "custom_domain": true}
+  ],
   "services": [{"binding": "MODEL_ADAPTER", "service": "agentops-workers-ai"}],
   "send_email": [{"name":"AUTH_EMAIL","allowed_sender_addresses":["login@mail.agentops.cloudmoro.com"]}],
   "vars": {"REQUIRE_LOGIN":"true","LOGIN_FROM":"login@mail.agentops.cloudmoro.com","MODEL_ADAPTER_URL": "https://agentops-workers-ai.ly-choas.workers.dev/v1/chat/completions"},

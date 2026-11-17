@@ -36,6 +36,8 @@ Agent 的环境可选 `local`、`development`、`staging`、`production`。Agent
 
 ## Cloudflare 部署
 
+主站为 [agentdeck.cloudmoro.com](https://agentdeck.cloudmoro.com/)。旧站 agentops.cloudmoro.com 返回 308 并保留路径和查询参数。API 客户端请直接使用新域名。
+
 Worker 在 `agentops.cloudmoro.com` 提供页面和 API。数据保存在 Cloudflare 的 SQLite Durable Object，初次部署从空工作区开始。
 
 ```sh
@@ -70,11 +72,11 @@ Cloudflare Workers AI 测试连接使用独立的私有 Worker。新账号部署
 | List and run agents | `GET /api/agents`、`POST /api/platform/runs` |
 
 ```sh
-curl -H "Authorization: Bearer $AGENTOPS_API_KEY" https://agentops.cloudmoro.com/api/agents
+curl -H "Authorization: Bearer $AGENTOPS_API_KEY" https://agentdeck.cloudmoro.com/api/agents
 curl -H "Authorization: Bearer $AGENTOPS_API_KEY" \
   -H 'Content-Type: application/json' \
   -d '{"target_kind":"agent","target":"<GET /api/agents 返回的 id>","input":"你好"}' \
-  https://agentops.cloudmoro.com/api/platform/runs
+  https://agentdeck.cloudmoro.com/api/platform/runs
 ```
 
 ## 手机号、短信和账号
