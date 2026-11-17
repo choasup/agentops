@@ -1,4 +1,4 @@
-# LangSmith Workspace
+# AgentOps
 
 本地 Agent 观测控制台，参考 LangSmith Observability 的追踪和监控流程。
 
@@ -33,3 +33,17 @@ curl -X POST http://127.0.0.1:8765/api/traces \
 Studio Agent 和部署目标均由本地服务执行。云端构建、扩缩容、托管 Agent、工作流调度、在线评估、自动洞察、权限和计费尚未实现。
 
 Agent 的环境可选 `local`、`development`、`staging`、`production`。Agent 页面会生成带 identifier 的上报示例，Dashboards 和 Traces 支持按环境筛选。
+
+## Cloudflare 部署
+
+Worker 在 `agentops.cloudmoro.com` 提供页面和 API。数据保存在 Cloudflare 的 SQLite Durable Object，初次部署从空工作区开始。
+
+```sh
+npx wrangler deploy
+npx wrangler secret put AGENTOPS_PASSWORD
+npx wrangler secret put AGENTOPS_INGEST_TOKEN
+```
+
+网页登录用户名为 `agentops`。外部 Agent 向 `POST /api/traces` 发送 JSON 时使用 `Authorization: Bearer <AGENTOPS_INGEST_TOKEN>`。该令牌仅允许写入 Trace。部署后可用 `GET /healthz` 检查服务状态。
+
+如需调用真实模型，在 Worker 中设置 `TRACE_STUDIO_MODEL` 和 `TRACE_STUDIO_MODEL_URL`，并通过 `wrangler secret put TRACE_STUDIO_MODEL_KEY` 配置模型密钥。

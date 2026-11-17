@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentOps</title>
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+<script src="platform.js" defer></script>
+</head>
+<body>
+<div class="shell">
+<aside class="sidebar">
+  <div class="brand"><span class="mark">⌁</span> AgentOps</div>
+  <div class="workspace"><span class="avatar">S</span><div><strong>Agent Workspace</strong><small>Local workspace</small></div></div>
+  <nav aria-label="Workspace">
+    <button class="nav" data-module="agents">⌘ <span>All agents</span></button>
+    <div class="nav-label group">MONITOR</div>
+    <button class="nav" data-view="overview">◫ <span>Dashboards</span></button>
+    <button class="nav" data-view="traces">≋ <span>Traces</span></button>
+    <div class="nav-label group">EVALUATION</div>
+    <button class="nav" data-module="datasets">▤ <span>Datasets</span></button>
+    <button class="nav" data-module="experiments">◈ <span>Experiments</span></button>
+    <button class="nav" data-module="feedback">◇ <span>Review Queue</span></button>
+    <div class="nav-label group">DEVELOPMENT</div>
+    <button class="nav" data-module="prompts">≡ <span>Prompts</span></button>
+    <button class="nav" data-module="playground">▷ <span>Playground</span></button>
+    <button class="nav" data-module="deployments">⇧ <span>Deployments</span></button>
+    <button class="nav" data-module="studio">⊞ <span>Studio</span></button>
+  </nav>
+  <div class="sidebar-foot"><span class="status-dot"></span> Local workspace</div>
+</aside>
+<main>
+  <header class="top"><span>Workspace <b>/</b> <strong id="crumb">All agents</strong></span><button id="connect" class="button primary">＋ Create agent</button></header>
+  <div class="content" id="tracing-content" hidden>
+    <div class="heading"><div><h1 id="title">Observability</h1><p id="description">Monitor performance and debug your agent runs.</p></div><label class="sr" for="project">Project</label><div class="filters"><select id="project" aria-label="Agent or tracing project"><option value="">All agents and projects</option></select><select id="environment" aria-label="Environment"><option value="">All environments</option><option value="local">Local</option><option value="development">Development</option><option value="staging">Staging</option><option value="production">Production</option></select></div></div>
+    <section id="overview">
+      <div class="metrics" id="metrics"></div>
+      <div class="panel chart-panel">
+        <div class="panel-head"><div><h2>Trace volume</h2><p>Daily runs over the last 14 days</p></div><div class="legend"><i></i> Successful <i></i> Error</div></div>
+        <div class="graph"><div id="axis" class="axis"></div><div id="bars" class="bars"></div></div>
+      </div>
+    </section>
+    <section class="panel table-panel">
+      <div class="panel-head"><div><h2>Recent traces</h2><p id="count"></p></div>
+        <div class="filters"><input id="search" type="search" aria-label="Search traces" placeholder="Search traces…"><select id="status" aria-label="Run status"><option value="">All statuses</option><option>success</option><option>error</option></select></div>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Agent / Project</th><th>Environment</th><th>Status</th><th>Latency</th><th>Tokens</th><th>Cost</th><th>Started</th></tr></thead><tbody id="rows"></tbody></table></div>
+    </section>
+    <p id="notice" role="status"></p>
+  </div>
+  <div class="content" id="platform-content" hidden></div>
+</main>
+</div>
+<dialog id="modal"><div class="modal-head"><h2 id="modal-title"></h2><form method="dialog"><button class="button" aria-label="Close">✕</button></form></div><div id="modal-body"></div></dialog>
+</body>
+</html>
