@@ -167,7 +167,7 @@ export class Accounts extends DurableObject {
     return true;
   }
 
-  async send(identity, address, channel) {
+  async send(identity, address, channel, purpose) {
     const now = Date.now();
     this.sql.exec('DELETE FROM limits WHERE expires<=?', now);
     this.sql.exec('DELETE FROM challenges WHERE expires<=?', now);
@@ -178,6 +178,7 @@ export class Accounts extends DurableObject {
       [channel + ':recipient:' + identityDigest, 3, 1800000], [channel + ':cooldown:' + identityDigest, 1, 60000]
     ])) return json({error:'请求过于频繁，请稍后再试。'}, 429);
     const challenge = randomId();
+    const label = {login:'登录', register:'注册', reset:'重置密码'}[purpose];
     this.sql.exec('INSERT OR REPLACE INTO challenges VALUES (?,?,?,0,?)', challenge, identity, now + challengeAge, 'sending');
     try {
       if (channel === 'email') {
@@ -186,8 +187,8 @@ export class Accounts extends DurableObject {
         this.sql.exec('INSERT INTO email_codes VALUES (?,?,?)', challenge, hashed, now + challengeAge);
         await this.env.AUTH_EMAIL.send({
           to:identity, from:{email:this.env.LOGIN_FROM, name:'Agent Deck'},
-          subject:'Agent Deck 登录验证码',
-          text:'你的 Agent Deck 登录验证码是 ' + code + '，5 分钟内有效。若你未请求此验证码，可忽略这封邮件。'
+          subject:'Agent Deck ' + label + '验证码',
+          text:'你的 Agent Deck ' + label + '验证码是 ' + code + '，5 分钟内有效。若你未请求此验证码，可忽略这封邮件。'
         });
       } else {
         const result = await smsRequest(this.env, 'SendSmsVerifyCode', {
@@ -206,13 +207,15 @@ export class Accounts extends DurableObject {
       console.error('Verification delivery failed', channel, error.name);
       return json({error:'验证码发送失败，请稍后再试。'}, 502);
     }
-    this.sql.exec('UPDATE challenges SET state=? WHERE id=?', 'ready', challenge);
+    this.sql.exec('UPDATE challenges SET state=? WHERE id=?', 'ready:' + purpose, challenge);
     return json({challenge, retry_after:60});
   }
 
   async verify(phone, body, guest, channel) {
-    const {challenge, code, password, reset_password} = body;
-    const reset = reset_password !== undefined;
+    const {challenge, code, password, reset_password, purpose} = body;
+    const reset = purpose === 'reset';
+    const register = purpose === 'register';
+    if (!reset && reset_password !== undefined) return json({error:'请使用找回密码流程。'}, 400);
     if (reset && (typeof reset_password !== 'string' || reset_password.length < 12 || reset_password.length > 128)) {
       return json({error:'新密码长度需为 12 至 128 个字符。'}, 400);
     }
@@ -220,15 +223,10 @@ export class Accounts extends DurableObject {
       return json({error:'请输入有效的六位验证码。'}, 400);
     }
     const now = Date.now();
-    const attempt = this.one("UPDATE challenges SET attempts=attempts+1,state='checking' WHERE id=? AND phone=? AND state='ready' AND expires>? AND attempts<5 RETURNING id", challenge, phone, now);
+    const ready = 'ready:' + purpose;
+    const attempt = this.one("UPDATE challenges SET attempts=attempts+1,state='checking' WHERE id=? AND phone=? AND state=? AND expires>? AND attempts<5 RETURNING id", challenge, phone, ready, now);
     if (!attempt) return json({error:'验证码已过期或尝试次数过多，请重新获取。'}, 401);
     try {
-      const account = this.one('SELECT * FROM accounts WHERE phone=?', phone);
-      if (account?.password && !reset) {
-        const valid = typeof password === 'string' && password.length <= 128 &&
-          constantTime(await passwordHash(password, account.salt), account.password);
-        if (!valid) return json({error:'此账号需要正确的密码和验证码。'}, 401);
-      }
       let passed;
       if (channel === 'email') {
         const expected = this.one('SELECT digest FROM email_codes WHERE id=? AND expires>?', challenge, Date.now());
@@ -241,6 +239,14 @@ export class Accounts extends DurableObject {
         passed = result?.Code === 'OK' && result.Model?.VerifyResult === 'PASS';
       }
       if (!passed) return json({error:'验证码无效或已过期。'}, 401);
+      const account = this.one('SELECT * FROM accounts WHERE phone=?', phone);
+      if (register && account) return json({error:'此账号已注册，请返回登录。'}, 409);
+      if (!register && !account) return json({error:'此账号尚未注册，请先创建账号。'}, 404);
+      if (purpose === 'login' && account.password) {
+        const valid = typeof password === 'string' && password.length <= 128 &&
+          constantTime(await passwordHash(password, account.salt), account.password);
+        if (!valid) return json({error:'此账号需要正确的密码和验证码。'}, 401);
+      }
       const token = randomId() + randomId();
       const hashed = await sha256(token);
       const newSalt = reset ? randomId() : null;
@@ -248,7 +254,7 @@ export class Accounts extends DurableObject {
       const consumed = this.one("DELETE FROM challenges WHERE id=? AND state='checking' AND expires>? RETURNING id", challenge, Date.now());
       if (!consumed) return json({error:'验证码已失效，请重新获取。'}, 401);
       if (channel === 'email') this.sql.exec('DELETE FROM email_codes WHERE id=?', challenge);
-      if (!account) {
+      if (register) {
         const candidate = workspacePattern.test(guest ?? '') ? guest : randomId();
         const occupied = this.one('SELECT 1 FROM accounts WHERE workspace=?', candidate);
         this.sql.exec('INSERT INTO accounts (phone,workspace) VALUES (?,?)', phone, occupied ? randomId() : candidate);
@@ -265,7 +271,7 @@ export class Accounts extends DurableObject {
       response.headers.append('Set-Cookie', cookie(workspaceCookie, '', 0));
       return response;
     } finally {
-      this.sql.exec("UPDATE challenges SET state='ready' WHERE id=? AND state='checking'", challenge);
+      this.sql.exec("UPDATE challenges SET state=? WHERE id=? AND state='checking'", ready, challenge);
     }
   }
 
@@ -303,13 +309,17 @@ export class Accounts extends DurableObject {
       return json({ok:true});
     }
     if (!['/send', '/verify'].includes(action)) return json({error:'Unknown auth action'}, 404);
+    const purpose = body.purpose;
+    if (!['login', 'register', 'reset'].includes(purpose)) {
+      return json({error:'请选择登录、注册或找回密码。'}, 400);
+    }
     const useEmail = body.email !== undefined;
     if (!useEmail && !smsConfigured(this.env)) return json({error:'短信服务尚未配置。'}, 503);
     if (useEmail && !emailConfigured(this.env)) return json({error:'邮件服务尚未配置。'}, 503);
     const identity = useEmail ? emailAddress(body.email) : phoneNumber(body.phone);
     if (!identity) return json({error:useEmail ? '请输入有效的邮箱地址。' : '请输入中国大陆手机号。'}, 400);
     const channel = useEmail ? 'email' : 'sms';
-    if (action === '/send') return this.send(identity, request.headers.get('X-AgentOps-Address'), channel);
+    if (action === '/send') return this.send(identity, request.headers.get('X-AgentOps-Address'), channel, purpose);
     return this.verify(identity, body, guest, channel);
   }
 }

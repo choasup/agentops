@@ -479,3 +479,6 @@ dialog::backdrop {background: #111a3a70}
 .provider-action {display:inline-flex; align-items:center; gap:5px}
 .provider-action .ui-icon {width:15px; height:15px}
 .nav.active .ui-icon {stroke-width:1.9}
+
+.sign-in-card .auth-actions {justify-content:space-between}
+.auth-actions a.button {text-decoration:none}

@@ -12,7 +12,13 @@ async function authRequest(action, data) {
 
 const accountButton = byId('account');
 
-function accountForm(inline = false) {
+const accountFlows = {
+  login: {title:'登录 Agent Deck', description:'使用验证码登录你的账号。', submit:'登录'},
+  register: {title:'创建 Agent Deck 账号', description:'验证你的邮箱或手机号，创建个人工作区。', submit:'创建账号'},
+  reset: {title:'找回密码', description:'验证你的账号后设置新密码。', submit:'重置密码并登录'}
+};
+
+function accountForm(purpose, inline = false) {
   if (!accountStatus.email_configured && !accountStatus.sms_configured) {
     return [element('p', '邮箱和短信登录入口已就绪，发信服务配置完成后可获取验证码。')];
   }
@@ -46,15 +52,12 @@ function accountForm(inline = false) {
   const reset = field('reset_password', '新密码（至少 12 个字符）', 'password');
   const resetInput = reset.querySelector('input');
   resetInput.autocomplete = 'new-password';
-  resetInput.required = false;
+  resetInput.required = true;
   resetInput.minLength = 12;
   resetInput.maxLength = 128;
-  reset.hidden = true;
   const send = element('button', '获取验证码', 'button');
   send.type = 'button';
-  const toggle = element('button', '忘记密码', 'button quiet');
-  toggle.type = 'button';
-  const submit = element('button', '登录或注册', 'button primary auth-submit');
+  const submit = element('button', accountFlows[purpose].submit, 'button primary auth-submit');
   submit.disabled = true;
   const message = element('p');
   message.setAttribute('role', 'status');
@@ -62,16 +65,6 @@ function accountForm(inline = false) {
   let requestedAddress;
   let requestedMethod;
   let countdown;
-  let recovering = false;
-
-  toggle.addEventListener('click', () => {
-    recovering = !recovering;
-    reset.hidden = !recovering;
-    resetInput.required = recovering;
-    password.hidden = recovering;
-    toggle.textContent = recovering ? '返回登录' : '忘记密码';
-    submit.textContent = recovering ? '重置密码并登录' : '登录或注册';
-  });
   const matchesRequest = () => addressInput.value.trim() === requestedAddress &&
     methodInput.value === requestedMethod;
   addressInput.addEventListener('input', () => { submit.disabled = !matchesRequest(); });
@@ -90,11 +83,14 @@ function accountForm(inline = false) {
     if (!addressInput.reportValidity()) return;
     send.disabled = true;
     methodInput.disabled = true;
+    submit.disabled = true;
+    challenge = undefined;
+    codeInput.value = '';
     message.textContent = '';
     const entered = addressInput.value.trim();
     const channel = methodInput.value;
     try {
-      const result = await authRequest('send', {[channel]:entered});
+      const result = await authRequest('send', {[channel]:entered, purpose});
       challenge = result.challenge;
       requestedAddress = entered;
       requestedMethod = channel;
@@ -105,6 +101,10 @@ function accountForm(inline = false) {
       send.textContent = '重新发送（' + seconds + ' 秒）';
       countdown = setInterval(() => {
         seconds--;
+        if (!form.isConnected) {
+          clearInterval(countdown);
+          return;
+        }
         if (seconds <= 0) {
           clearInterval(countdown);
           send.textContent = '重新发送';
@@ -124,23 +124,53 @@ function accountForm(inline = false) {
     if (!challenge || !matchesRequest()) return;
     submit.disabled = true;
     try {
-      const data = {[requestedMethod]:requestedAddress, challenge, code:codeInput.value.trim()};
-      if (recovering) data.reset_password = resetInput.value;
-      else if (passwordInput.value) data.password = passwordInput.value;
+      const data = {[requestedMethod]:requestedAddress, challenge, code:codeInput.value.trim(), purpose};
+      if (purpose === 'reset') data.reset_password = resetInput.value;
+      else if (purpose === 'login' && passwordInput.value) data.password = passwordInput.value;
       await authRequest('verify', data);
-      location.reload();
+      const url = new URL(location.href);
+      url.searchParams.delete('auth');
+      location.replace(url.href);
     } catch (error) {
       message.textContent = error.message;
       submit.disabled = false;
     }
   });
-  if (!inline) byId('modal').addEventListener('close', () => clearInterval(countdown), {once:true});
   const row = element('div', undefined, 'auth-send-row');
   row.append(address, send);
+  form.append(method, row, code);
+  if (purpose === 'login') form.append(password);
+  if (purpose === 'reset') form.append(reset);
+  form.append(submit, message);
+
   const actions = element('div', undefined, 'auth-actions');
-  actions.append(toggle);
-  form.append(method, row, code, password, reset, submit, actions, message);
-  return [form];
+  const destinations = purpose === 'login' ? [['register','创建账号'], ['reset','忘记密码']] : [['login','返回登录']];
+  for (const [destination, label] of destinations) {
+    const link = element(inline ? 'a' : 'button', label, 'button quiet');
+    if (inline) {
+      const url = new URL(location.href);
+      if (destination === 'login') url.searchParams.delete('auth');
+      else url.searchParams.set('auth', destination);
+      link.href = url.href;
+    } else {
+      link.type = 'button';
+      link.addEventListener('click', () => showAccountFlow(destination));
+    }
+    actions.append(link);
+  }
+  return [form, actions];
+}
+
+function showAccountFlow(purpose, inline = false) {
+  const flow = accountFlows[purpose];
+  const content = accountForm(purpose, inline);
+  if (inline) {
+    byId('sign-in-title').textContent = flow.title;
+    byId('sign-in-description').textContent = flow.description;
+    byId('sign-in-form').replaceChildren(...content);
+  } else {
+    openModal(flow.title, [element('p', flow.description), ...content]);
+  }
 }
 
 function accountSettings() {
@@ -173,7 +203,8 @@ function accountSettings() {
 
 accountButton.addEventListener('click', () => {
   if (!accountStatus) return;
-  openModal(accountStatus.user ? '账号设置' : '登录或注册', accountStatus.user ? accountSettings() : accountForm());
+  if (accountStatus.user) openModal('账号设置', accountSettings());
+  else showAccountFlow('login');
 });
 
 async function boot() {
@@ -182,10 +213,11 @@ async function boot() {
     if (accountStatus) {
       accountButton.hidden = false;
       accountButton.replaceChildren(icon('user'),
-        element('span', accountStatus.user?.email ?? accountStatus.user?.phone ?? '登录或注册'));
+        element('span', accountStatus.user?.email ?? accountStatus.user?.phone ?? '登录'));
       document.querySelectorAll('[data-cloud]').forEach(item => { item.hidden = false; });
       if (accountStatus.required && !accountStatus.user) {
-        byId('sign-in-form').replaceChildren(...accountForm(true));
+        const requested = new URL(location.href).searchParams.get('auth');
+        showAccountFlow(['register','reset'].includes(requested) ? requested : 'login', true);
         byId('sign-in').hidden = false;
         return;
       }

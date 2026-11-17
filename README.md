@@ -97,7 +97,7 @@ curl https://agentdeck.cloudmoro.com/v1/chat/completions \
 
 ## 手机号、短信和账号
 
-生产账号由 Cloudflare Durable Object 管理。阿里云号码认证服务负责向中国大陆手机号发送并核验短信验证码。首次验证创建账号并接管当前浏览器的访客工作区，后续可以换设备登录。账号可设置密码，设置后登录要同时验证密码与短信验证码。忘记密码时可通过短信验证码重置；退出登录会吊销当前会话。
+生产账号由 Cloudflare Durable Object 管理。阿里云号码认证服务负责向中国大陆手机号发送并核验短信验证码。用户通过「创建账号」验证联系方式并接管当前浏览器的访客工作区，已有账号可换设备登录。账号可设置密码，设置后登录需同时验证密码和验证码。忘记密码时通过独立流程验证并重置。三种流程的验证码仅限各自用途。退出登录会吊销当前会话。
 
 1. 在[阿里云号码认证控制台](https://dypns.console.aliyun.com/)开通短信认证，选用支持 `code` 与 `min` 参数的登录／注册签名和模板。准备仅可调用 `dypns:SendSmsVerifyCode` 和 `dypns:CheckSmsVerifyCode` 的 RAM 凭据，具体权限名称见对应 OpenAPI 说明。
 2. 用 `npx wrangler secret put <名称>` 设置 `PNVS_ACCESS_KEY_ID`、`PNVS_ACCESS_KEY_SECRET`、`PNVS_SIGN_NAME`、`PNVS_TEMPLATE_CODE`。
