@@ -215,6 +215,17 @@ function renderModule(module, selectedTarget) {
   }
 
   if (module === 'billing') {
+    const integration = selectedTarget?.source === 'external' ? selectedTarget : undefined;
+    function backToIntegration() {
+      const back = iconButton('arrow', 'Back to integration', 'button quiet setup-back');
+      back.addEventListener('click', async () => {
+        if (byId('modal').open) byId('modal').close();
+        await loadModule('agents');
+        if (activeModule === 'agents') externalIntegration(integration);
+      });
+      return back;
+    }
+    if (integration) heading.append(backToIntegration());
     if (billing) panels.push(...billingPanels());
     const keySection = element('section', undefined, 'billing-keys wide');
     keySection.id = 'billing-api-keys';
@@ -231,15 +242,17 @@ function renderModule(module, selectedTarget) {
       const option = element('input');
       option.type = 'checkbox';
       option.value = value;
+      option.checked = Boolean(integration && value === 'traces:write');
       const wrapper = element('label');
       wrapper.append(option, document.createTextNode(label));
       scopes.append(wrapper);
     }
-    keyPanels.append(formPanel('Create API key', [nameField(), scopes], 'Generate key', async data => {
+    const keyName = integration ? field('name', 'Name', 'text', 'Trace · ' + integration.name.slice(0, 72)) : nameField();
+    keyPanels.append(formPanel('Create API key', [keyName, scopes], 'Generate key', async data => {
       const requested = Array.from(scopes.querySelectorAll('input:checked'), input => input.value);
       const key = await keyRequest('', {name:data.name, scopes:requested});
       if (activeModule !== 'billing' || platformContent.hidden) return;
-      await loadModule('billing');
+      await loadModule('billing', integration);
       const value = element('pre', key.token);
       const copy = iconButton('copy', 'Copy API key', 'button primary');
       copy.addEventListener('click', async () => {
@@ -247,7 +260,8 @@ function renderModule(module, selectedTarget) {
         catch { copy.querySelector('span').textContent = 'Select and copy the key above'; }
       });
       openModal('API key created', [
-        element('p', 'Copy this key now. It is displayed once.'), value, copy
+        element('p', 'Copy this key now. It is displayed once.'), value, copy,
+        ...(integration ? [backToIntegration()] : [])
       ]);
     }));
     keyPanels.append(listPanel('Workspace keys', apiKeys.map(key => {
@@ -265,7 +279,7 @@ function renderModule(module, selectedTarget) {
         revoke.disabled = true;
         try {
           await keyRequest('/revoke', {id:key.id});
-          await loadModule('billing');
+          await loadModule('billing', integration);
         } catch (error) {
           result.textContent = error.message;
           revoke.disabled = false;
@@ -506,7 +520,7 @@ function externalTrace(agent) {
 }
 
 function externalIntegration(agent) {
-  const requiresKey = location.protocol === 'https:';
+  const requiresKey = Boolean(accountStatus?.user);
   const panel = element('div', undefined, 'external-integration');
   const status = element('div', undefined, 'integration-status');
   status.setAttribute('aria-live', 'polite');
@@ -514,7 +528,7 @@ function externalIntegration(agent) {
   const keys = iconButton('key', 'Open Billing → API Keys', 'button');
   keys.addEventListener('click', async () => {
     byId('modal').close();
-    await loadModule('billing');
+    await loadModule('billing', agent);
     byId('billing-api-keys')?.scrollIntoView();
   });
   const identity = element('div', undefined, 'integration-identity');
