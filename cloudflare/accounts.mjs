@@ -225,7 +225,7 @@ export class Accounts extends DurableObject {
 
   async login(identity, password, address) {
     const invalid = () => json({error:'账号或密码不正确。如果还未设置密码，请使用「找回密码」。'}, 401);
-    if (!validPassword(password)) return invalid();
+    if (typeof password !== 'string' || !password.length || password.length > 128) return invalid();
     const [ip, recipient] = await Promise.all([sha256(address || 'unknown'), sha256(identity)]);
     this.sql.exec('DELETE FROM limits WHERE expires<=?', Date.now());
     if (!this.takeLimits([['login:ip:' + ip, 30, 600000], ['login:recipient:' + recipient, 10, 600000]])) {

@@ -53,7 +53,7 @@ function accountForm(purpose, inline = false) {
     (purpose === 'register' ? '设置密码（至少 12 个字符）' : '新密码（至少 12 个字符）'), 'password');
   const passwordInput = password.querySelector('input');
   passwordInput.autocomplete = login ? 'current-password' : 'new-password';
-  passwordInput.minLength = 12;
+  if (!login) passwordInput.minLength = 12;
   passwordInput.maxLength = 128;
   const send = element('button', '获取验证码', 'button');
   send.type = 'button';
