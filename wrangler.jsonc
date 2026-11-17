@@ -5,6 +5,8 @@
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{"pattern": "agentops.cloudmoro.com", "custom_domain": true}],
+  "services": [{"binding": "MODEL_ADAPTER", "service": "agentops-workers-ai"}],
+  "vars": {"MODEL_ADAPTER_URL": "https://agentops-workers-ai.ly-choas.workers.dev/v1/chat/completions"},
   "assets": {"directory": "./web", "binding": "ASSETS", "run_worker_first": true},
   "durable_objects": {"bindings": [{"name": "WORKSPACE", "class_name": "Workspace"}]},
   "migrations": [{"tag": "v1", "new_sqlite_classes": ["Workspace"]}]

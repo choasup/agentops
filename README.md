@@ -54,3 +54,5 @@ npx wrangler secret put AGENTOPS_INGEST_TOKEN
 3. 创建后在 **Studio** 输入消息，执行记录可在 **Traces** 查看。
 
 支持 OpenAI 兼容的 Chat Completions 接口。Cloudflare 部署要求 HTTPS。本机 Python 版本也支持回环地址上的 HTTP 模型服务。模型密钥由服务端保存，列表和测试接口不会返回密钥。既有 Agent 仍可使用部署环境中配置的默认模型。
+
+Cloudflare Workers AI 测试连接使用独立的私有 Worker。新账号部署时，先用 `npx wrangler deploy --config cloudflare/workers-ai/wrangler.jsonc` 部署模型适配器，再为适配器设置 `ADAPTER_KEY`。AgentOps 通过服务绑定调用它，其他模型继续通过各自的 HTTPS 端点调用。

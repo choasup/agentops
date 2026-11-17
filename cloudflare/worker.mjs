@@ -170,10 +170,12 @@ export class Workspace extends DurableObject {
     const apiKey = provider ? provider.api_key : this.env.TRACE_STUDIO_MODEL_KEY;
     if (apiKey) headers.Authorization = 'Bearer ' + apiKey;
     try {
-      const response = await fetch(endpoint, {
+      const request = new Request(endpoint, {
         method:'POST', headers, body:JSON.stringify({model, messages}),
-        signal:AbortSignal.timeout(30000), redirect:'error'
+        signal:AbortSignal.timeout(30000), redirect:'manual'
       });
+      const adapter = endpoint === this.env.MODEL_ADAPTER_URL ? this.env.MODEL_ADAPTER : null;
+      const response = await (adapter ? adapter.fetch(request) : fetch(request));
       if (!response.ok) throw new InputError('Model service returned HTTP ' + response.status);
       const result = await response.json();
       const output = result.choices?.[0]?.message?.content;
