@@ -47,3 +47,11 @@ npx wrangler secret put AGENTOPS_INGEST_TOKEN
 网页登录用户名为 `agentops`。外部 Agent 向 `POST /api/traces` 发送 JSON 时使用 `Authorization: Bearer <AGENTOPS_INGEST_TOKEN>`。该令牌仅允许写入 Trace。部署后可用 `GET /healthz` 检查服务状态。
 
 如需调用真实模型，在 Worker 中设置 `TRACE_STUDIO_MODEL` 和 `TRACE_STUDIO_MODEL_URL`，并通过 `wrangler secret put TRACE_STUDIO_MODEL_KEY` 配置模型密钥。
+
+## 在平台接入 LLM 并创建 Agent
+
+1. 打开 **Models**，填写连接名称、完整 Chat Completions URL、模型 ID 和 API Key（如供应商要求），保存后用 **Test connection** 试发一条消息。
+2. 打开 **All agents → Build in Studio**，选择已保存的模型并填写 Agent 名称和系统指令。
+3. 创建后在 **Studio** 输入消息，执行记录可在 **Traces** 查看。
+
+支持 OpenAI 兼容的 Chat Completions 接口。Cloudflare 部署要求 HTTPS。本机 Python 版本也支持回环地址上的 HTTP 模型服务。模型密钥由服务端保存，列表和测试接口不会返回密钥。既有 Agent 仍可使用部署环境中配置的默认模型。

@@ -7,7 +7,8 @@ import sqlite3
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parent
@@ -15,6 +16,17 @@ ENVIRONMENTS = ("local", "development", "staging", "production")
 
 def database():
     return sqlite3.connect(ROOT / 'traces.sqlite3')
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+def public_record(record):
+    if record['kind'] != 'model':
+        return record
+    visible = dict(record)
+    visible['has_api_key'] = bool(visible.pop('api_key', ''))
+    return visible
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
@@ -59,6 +71,20 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError(kind + ' was not found')
             return record
 
+        if action == 'models':
+            name = required_text('name')
+            model = required_text('model')
+            url = required_text('url')
+            endpoint = urlsplit(url)
+            loopback = endpoint.hostname in ('localhost', '127.0.0.1', '::1')
+            if not endpoint.hostname or endpoint.username is not None or endpoint.fragment or (
+                endpoint.scheme != 'https' and not (loopback and endpoint.scheme == 'http')
+            ):
+                raise ValueError('Use HTTPS or a local HTTP model endpoint without embedded credentials')
+            key = data.get('api_key')
+            return public_record(self.save_record('model', dict(
+                name=name, model=model, url=url, api_key=key.strip() if isinstance(key, str) else ''
+            )))
         if action == 'datasets':
             return self.save_record('dataset', {'name': required_text('name')})
         if action == 'examples':
@@ -82,6 +108,10 @@ class Handler(SimpleHTTPRequestHandler):
             agent = dict(name=name, source=source, identifier=slug + '-' + uuid4().hex[:12])
             if source == 'studio':
                 agent['instructions'] = required_text('instructions')
+                if data.get('provider'):
+                    agent['provider'] = record_for('provider', 'model')['id']
+                elif not os.environ.get('TRACE_STUDIO_MODEL'):
+                    raise ValueError('Choose a model before creating the agent')
             return self.save_record('agent', agent)
 
         def render(template, value):
@@ -94,23 +124,23 @@ class Handler(SimpleHTTPRequestHandler):
                 return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
             return re.sub(r'\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}', substitute, template)
 
-        def execute(prompt, value, instructions=None):
+        def execute(prompt, value, instructions=None, provider=None):
             if instructions is not None:
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError('Enter a message to run this agent')
                 rendered = value
             else:
                 rendered = render(prompt['template'], value)
-            model = os.environ.get('TRACE_STUDIO_MODEL')
+            model = provider['model'] if provider else os.environ.get('TRACE_STUDIO_MODEL')
             if not model:
                 if instructions is not None:
                     raise ValueError('Configure a model service before running a Studio agent')
                 return rendered, 0
-            endpoint = os.environ.get('TRACE_STUDIO_MODEL_URL')
+            endpoint = provider['url'] if provider else os.environ.get('TRACE_STUDIO_MODEL_URL')
             if not endpoint:
                 raise ValueError('Set TRACE_STUDIO_MODEL_URL to the chat completions endpoint')
             headers = {'Content-Type': 'application/json'}
-            api_key = os.environ.get('TRACE_STUDIO_MODEL_KEY')
+            api_key = provider['api_key'] if provider else os.environ.get('TRACE_STUDIO_MODEL_KEY')
             if api_key:
                 headers['Authorization'] = 'Bearer ' + api_key
             messages = [dict(role='user', content=rendered)]
@@ -118,7 +148,7 @@ class Handler(SimpleHTTPRequestHandler):
                 messages.insert(0, dict(role='system', content=instructions))
             payload = dict(model=model, messages=messages)
             try:
-                with urlopen(Request(endpoint, json.dumps(payload).encode(), headers), timeout=30) as response:
+                with build_opener(NoRedirect()).open(Request(endpoint, json.dumps(payload).encode(), headers), timeout=30) as response:
                     result = json.load(response)
                 content = result['choices'][0]['message']['content']
                 if not isinstance(content, str):
@@ -127,6 +157,10 @@ class Handler(SimpleHTTPRequestHandler):
             except (URLError, TimeoutError, ValueError, KeyError, IndexError, TypeError) as error:
                 raise ValueError('Model inference failed (' + type(error).__name__ + ')') from error
 
+        if action == 'model-test':
+            provider = record_for('provider', 'model')
+            output, tokens = execute(None, required_text('message'), 'Reply briefly.', provider)
+            return dict(output=output, tokens=tokens)
         if action == 'experiments':
             dataset = record_for('dataset', 'dataset')
             prompt = record_for('prompt', 'prompt')
@@ -168,12 +202,14 @@ class Handler(SimpleHTTPRequestHandler):
             if target.get('source') == 'external':
                 raise ValueError('External agents run in your application')
             instructions = target.get('instructions')
+            provider = next((item for item in records if item['kind'] == 'model'
+                             and item['id'] == target.get('provider')), None)
             prompt = next((item for item in records if item['id'] == target.get('prompt')), None)
             start = time.perf_counter()
             step = {'name': 'generate', 'type': 'llm', 'input': data.get('input')} if instructions is not None or os.environ.get('TRACE_STUDIO_MODEL') else {'name': 'render_prompt', 'type': 'template', 'input': data.get('input')}
             tokens = 0
             try:
-                step['output'], tokens = execute(prompt, step['input'], instructions)
+                step['output'], tokens = execute(prompt, step['input'], instructions, provider)
                 status = 'success'
             except ValueError as error:
                 step['error'] = str(error)
@@ -190,7 +226,7 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == '/api/platform':
-            return self.respond(200, self.records())
+            return self.respond(200, [public_record(record) for record in self.records()])
 
         if self.path != '/api/traces':
             return super().do_GET()

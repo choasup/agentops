@@ -1,5 +1,6 @@
 const platformContent = byId('platform-content');
 const modules = {
+  models: ['Models', 'Connect and test an OpenAI-compatible model for your agents.'],
   datasets: ['Datasets', 'Curate examples and reference outputs for evaluation.'],
   experiments: ['Experiments', 'Evaluate prompt versions against a dataset and compare scores.'],
   feedback: ['Review Queue', 'Score ingested traces and record reviewer feedback.'],
@@ -37,6 +38,7 @@ function field(name, label, type = 'text', value = '') {
     for (const [id, text] of type) input.append(new Option(text, id));
   } else {
     input = element(type === 'textarea' ? 'textarea' : 'input');
+    if (type !== 'textarea') input.type = type;
     input.value = value;
   }
   input.name = name;
@@ -100,6 +102,31 @@ function renderModule(module, selectedTarget) {
   const promptField = () => field('prompt', 'Prompt version', promptOptions());
   const inputField = () => field('input', 'Input JSON', 'textarea', '{"input":"Hello"}');
 
+  if (module === 'models') {
+    const keyField = field('api_key', 'API key (optional)', 'password');
+    const keyInput = keyField.querySelector('input');
+    keyInput.required = false;
+    keyInput.autocomplete = 'off';
+    const urlField = field('url', 'Chat Completions URL', 'url');
+    urlField.querySelector('input').placeholder = 'https://api.example.com/v1/chat/completions';
+    panels.push(formPanel('Connect a model', [
+      nameField(), urlField, field('model', 'Model ID'), keyField
+    ], 'Save model', data => create(module, data)));
+    if (ofKind('model').length) {
+      panels.push(formPanel('Test connection', [
+        field('provider', 'Model', options('model')), field('message', 'Message', 'textarea', 'Reply with OK.')
+      ], 'Test model', async (data, section) => {
+        section.querySelector('.module-result')?.remove();
+        const result = await platformRequest('/model-test', data);
+        section.append(element('pre', result.output, 'module-result'));
+      }));
+    }
+    panels.push(listPanel('Connected models', ofKind('model').map(record =>
+      expandable(record.name + ' · ' + record.model, {
+        endpoint:record.url, credential:record.has_api_key ? 'API key saved' : 'No API key'
+      }))));
+  }
+
   if (module === 'datasets') {
     panels.push(formPanel('Create dataset', [nameField()], 'Create dataset', data => create(module, data)));
     if (ofKind('dataset').length) panels.push(formPanel('Add example', [
@@ -158,12 +185,21 @@ function renderModule(module, selectedTarget) {
   }
 
   if (module === 'agents') {
-    panels.push(formPanel('Build in Studio', [
-      nameField(), field('instructions', 'Agent instructions', 'textarea')
-    ], 'Create agent', async data => {
-      const agent = await platformRequest('/agents', {...data, source:'studio'});
-      if (!platformContent.hidden && activeModule === 'agents') await loadModule('studio', agent.id);
-    }));
+    if (ofKind('model').length) {
+      panels.push(formPanel('Build in Studio', [
+        nameField(), field('provider', 'Model', options('model')),
+        field('instructions', 'Agent instructions', 'textarea')
+      ], 'Create agent', async data => {
+        const agent = await platformRequest('/agents', {...data, source:'studio'});
+        if (!platformContent.hidden && activeModule === 'agents') await loadModule('studio', agent.id);
+      }));
+    } else {
+      const connect = element('button', 'Connect a model', 'button primary module-result');
+      connect.addEventListener('click', () => loadModule('models'));
+      const section = element('section', undefined, 'panel module-panel');
+      section.append(element('h2', 'Build in Studio'), element('p', 'Connect a model to create your first Studio agent.'), connect);
+      panels.push(section);
+    }
     panels.push(formPanel('Connect an external agent', [nameField()], 'Create external agent',
       data => create(module, {...data, source:'external'})));
     gridEntries(panelForAgents());
@@ -178,6 +214,7 @@ function renderModule(module, selectedTarget) {
     return listPanel('Agent registry', ofKind('agent').map(agent => {
       const item = element('details');
       item.append(element('summary', agent.name + ' · ' + (agent.source === 'external' ? 'External' : 'Studio')));
+      if (agent.provider) item.append(element('p', 'Model · ' + recordName(agent.provider)));
       if (agent.identifier) {
         item.append(element('p', 'Identifier · ' + agent.identifier));
         const example = {

@@ -7,6 +7,11 @@ const id = () => crypto.randomUUID().replaceAll('-', '');
 
 class InputError extends Error {}
 
+function publicRecord(record) {
+  const {api_key, ...visible} = record;
+  return record.kind === 'model' ? {...visible, has_api_key:Boolean(api_key)} : visible;
+}
+
 function requiredText(data, key) {
   const value = data[key];
   if (typeof value !== 'string' || !value.trim()) throw new InputError(key + ' is required');
@@ -93,7 +98,7 @@ export class Workspace extends DurableObject {
     return this.saveTrace(trace);
   }
 
-  async execute(prompt, value, instructions) {
+  async execute(prompt, value, instructions, provider) {
     let content = value;
     if (instructions) {
       if (typeof value !== 'string' || !value.trim()) throw new InputError('Enter a message');
@@ -104,27 +109,31 @@ export class Workspace extends DurableObject {
         return typeof variables[key] === 'string' ? variables[key] : JSON.stringify(variables[key]);
       });
     }
-    if (!this.env.TRACE_STUDIO_MODEL) {
+    const model = provider?.model ?? this.env.TRACE_STUDIO_MODEL;
+    if (!model) {
       if (instructions) throw new InputError('Configure a model service before running this agent');
       return {output:content, tokens:0};
     }
-    if (!this.env.TRACE_STUDIO_MODEL_URL) throw new InputError('Model URL is missing');
+    const endpoint = provider?.url ?? this.env.TRACE_STUDIO_MODEL_URL;
+    if (!endpoint) throw new InputError('Model URL is missing');
     const messages = [{role:'user', content}];
     if (instructions) messages.unshift({role:'system', content:instructions});
     const headers = {'Content-Type':'application/json'};
-    if (this.env.TRACE_STUDIO_MODEL_KEY) headers.Authorization = 'Bearer ' + this.env.TRACE_STUDIO_MODEL_KEY;
+    const apiKey = provider ? provider.api_key : this.env.TRACE_STUDIO_MODEL_KEY;
+    if (apiKey) headers.Authorization = 'Bearer ' + apiKey;
     try {
-      const response = await fetch(this.env.TRACE_STUDIO_MODEL_URL, {
-        method:'POST', headers, body:JSON.stringify({model:this.env.TRACE_STUDIO_MODEL, messages}),
+      const response = await fetch(endpoint, {
+        method:'POST', headers, body:JSON.stringify({model, messages}),
         signal:AbortSignal.timeout(30000), redirect:'error'
       });
-      if (!response.ok) throw new Error();
+      if (!response.ok) throw new InputError('Model service returned HTTP ' + response.status);
       const result = await response.json();
       const output = result.choices?.[0]?.message?.content;
       if (typeof output !== 'string') throw new Error();
       return {output, tokens:result.usage?.total_tokens ?? 0};
-    } catch {
-      throw new InputError('Model inference failed');
+    } catch (error) {
+      if (error instanceof InputError) throw error;
+      throw new InputError('Could not read a response from the model service');
     }
   }
 
@@ -136,6 +145,22 @@ export class Workspace extends DurableObject {
       if (!record) throw new InputError(kind + ' was not found');
       return record;
     };
+    if (action === 'models') {
+      const name = requiredText(data, 'name');
+      const model = requiredText(data, 'model');
+      let url;
+      try { url = new URL(requiredText(data, 'url')); }
+      catch { throw new InputError('Enter a valid HTTPS Chat Completions endpoint'); }
+      if (url.protocol !== 'https:' || url.username || url.password || url.hash) {
+        throw new InputError('Use an HTTPS endpoint without embedded credentials or a fragment');
+      }
+      const apiKey = typeof data.api_key === 'string' ? data.api_key.trim() : '';
+      return publicRecord(this.save('model', {name, model, url:url.href, api_key:apiKey}));
+    }
+    if (action === 'model-test') {
+      const provider = find('provider', 'model');
+      return this.execute(null, requiredText(data, 'message'), 'Reply briefly.', provider);
+    }
     if (action === 'datasets') return this.save('dataset', {name:requiredText(data, 'name')});
     if (action === 'examples') {
       const dataset = find('dataset', 'dataset');
@@ -151,7 +176,11 @@ export class Workspace extends DurableObject {
       if (!['studio', 'external'].includes(source)) throw new InputError('Invalid agent source');
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'agent';
       const agent = {name, source, identifier:slug + '-' + id().slice(0, 12)};
-      if (source === 'studio') agent.instructions = requiredText(data, 'instructions');
+      if (source === 'studio') {
+        agent.instructions = requiredText(data, 'instructions');
+        if (data.provider) agent.provider = find('provider', 'model').id;
+        else if (!this.env.TRACE_STUDIO_MODEL) throw new InputError('Choose a model before creating the agent');
+      }
       return this.save('agent', agent);
     }
     if (action === 'deployments') return this.save('deployment', {
@@ -188,12 +217,13 @@ export class Workspace extends DurableObject {
       const target = find('target', kind);
       if (target.source === 'external') throw new InputError('External agents run in your application');
       const prompt = records.find(item => item.id === target.prompt);
+      const provider = records.find(item => item.kind === 'model' && item.id === target.provider);
       const model = target.instructions || this.env.TRACE_STUDIO_MODEL;
       const step = {name:model ? 'generate' : 'render_prompt', type:model ? 'llm' : 'template', input:data.input};
       const start = performance.now();
       let tokens = 0;
       try {
-        const result = await this.execute(prompt, data.input, target.instructions);
+        const result = await this.execute(prompt, data.input, target.instructions, provider);
         step.output = result.output;
         tokens = result.tokens;
       } catch (error) {
@@ -215,7 +245,7 @@ export class Workspace extends DurableObject {
     const {pathname} = new URL(request.url);
     if (request.method === 'GET') {
       if (pathname === '/api/traces') return json(this.rows('traces'));
-      if (pathname === '/api/platform') return json(this.rows('records'));
+      if (pathname === '/api/platform') return json(this.rows('records').map(publicRecord));
     }
     if (request.method === 'POST') {
       try {
