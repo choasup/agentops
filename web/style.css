@@ -538,3 +538,12 @@ dialog::backdrop {background: #111a3a70}
 .studio-stream > .button {align-self:start; margin-top:8px}
 #modal:has(.agent-builder) {width:min(690px,calc(100% - 24px))}
 .agent-builder-modes {grid-template-columns:repeat(2,minmax(0,1fr))}
+
+.external-integration, .integration-steps {display:grid; gap:12px}
+.integration-steps {padding-inline-start:22px; margin:0}
+.integration-steps li {display:list-item; padding-inline-start:4px}
+.integration-steps li > * + * {margin-top:8px}
+.integration-identity, .integration-status {display:flex; align-items:center; flex-wrap:wrap; gap:8px}
+.integration-identity code {overflow-wrap:anywhere}
+.integration-command {margin:0; max-width:100%; overflow:auto}
+.agent-identity .pill {margin-top:4px}

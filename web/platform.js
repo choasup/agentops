@@ -481,11 +481,13 @@ function openCreateAgent({preferredModel, draft = {}} = {}) {
       providerCards(vendor => connectProvider(vendor, () => openCreateAgent({draft}))));
     studioBody.append(setup);
   }
-  externalBody.append(formPanel('External agent', [field('name', 'Name')], 'Register agent', async data => {
-    await platformRequest('/agents', {...data, source:'external'});
-    byId('modal').close();
-    await loadModule('agents');
-  }));
+  externalBody.append(element('p', 'Your agent runs in your application. Register it to get an ID for sending traces to Agent Deck.'),
+    formPanel('Register an external agent', [field('name', 'Agent name')], 'Register and view setup', async data => {
+      const agent = await platformRequest('/agents', {...data, source:'external'});
+      await loadModule('agents');
+      if (byId('modal').open) externalIntegration(agent);
+    }));
+
   function selectMode(isStudio) {
     studio.setAttribute('aria-pressed', String(isStudio));
     external.setAttribute('aria-pressed', String(!isStudio));
@@ -499,30 +501,95 @@ function openCreateAgent({preferredModel, draft = {}} = {}) {
   openModal('New agent', [body]);
 }
 
+function externalTrace(agent) {
+  return traces.find(trace => trace.agent_id === agent.identifier);
+}
+
+function externalIntegration(agent) {
+  const requiresKey = location.protocol === 'https:';
+  const panel = element('div', undefined, 'external-integration');
+  const status = element('div', undefined, 'integration-status');
+  status.setAttribute('aria-live', 'polite');
+  const check = iconButton('traces', 'Check for a trace', 'button');
+  const keys = iconButton('key', 'Open Billing → API Keys', 'button');
+  keys.addEventListener('click', async () => {
+    byId('modal').close();
+    await loadModule('billing');
+    byId('billing-api-keys')?.scrollIntoView();
+  });
+  const identity = element('div', undefined, 'integration-identity');
+  identity.append(element('span', 'Agent ID'), element('code', agent.identifier));
+  const environment = field('environment', 'Environment', [
+    ['development', 'Development'], ['staging', 'Staging'], ['production', 'Production'], ['local', 'Local']
+  ]);
+  const environmentInput = environment.querySelector('select');
+  environmentInput.value = 'development';
+  const code = element('pre', undefined, 'integration-command');
+  function updateCommand() {
+    const payload = JSON.stringify({agent_id:agent.identifier, environment:environmentInput.value,
+      name:'connection_check', status:'success'});
+    code.textContent = [
+      'curl --fail-with-body -X POST ' + location.origin + '/api/traces',
+      ...(requiresKey ? ['  -H "Authorization: Bearer $AGENT_DECK_API_KEY"'] : []),
+      "  -H 'Content-Type: application/json'",
+      "  --data '" + payload + "'"
+    ].join(' ' + String.fromCharCode(92) + String.fromCharCode(10));
+  }
+  environmentInput.addEventListener('change', updateCommand);
+  updateCommand();
+  const copy = iconButton('copy', 'Copy command', 'button');
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(code.textContent);
+      copy.querySelector('span').textContent = 'Copied';
+    } catch {
+      const range = document.createRange();
+      range.selectNodeContents(code);
+      window.getSelection().removeAllRanges();
+      window.getSelection().addRange(range);
+    }
+  });
+  function updateStatus(checked = false) {
+    const trace = externalTrace(agent);
+    const text = trace ? 'Trace received' : tracesReady ? 'Waiting for first trace' : 'Trace status unavailable';
+    status.replaceChildren(element('span', text, trace ? 'pill success' : 'pill'));
+    if (trace) status.append(traceLink(trace.id));
+    else if (checked) status.append(element('small', 'No trace was found for this Agent ID yet.'));
+  }
+  check.addEventListener('click', async () => {
+    check.disabled = true;
+    const loaded = await refresh();
+    check.disabled = false;
+    if (loaded) updateStatus(true);
+    else status.replaceChildren(element('p', 'Could not load traces. Try again.'));
+  });
+  updateStatus();
+  const steps = element('ol', undefined, 'integration-steps');
+  const authorize = element('li');
+  if (requiresKey) authorize.append(element('h3', 'Get a trace API key'),
+    element('p', 'Use an Agent Deck API key with Send traces permission. Set it as AGENT_DECK_API_KEY in your environment.'), keys);
+  const send = element('li');
+  send.append(element('h3', 'Send a connection check'), environment, code, copy);
+  const confirm = element('li');
+  confirm.append(element('h3', 'Verify receipt'), status, check,
+    element('p', 'Once verified, send the same fields from your application after each run, using the real run name and status.'));
+  if (requiresKey) steps.append(authorize);
+  steps.append(send, confirm);
+  panel.append(identity, steps);
+  openModal('Connect ' + agent.name, [panel]);
+}
+
 function agentSettings(agent, returnTo = 'agents') {
-  const controls = element('div', undefined, 'model-actions');
-  const isExternal = agent.source === 'external';
+  if (agent.source === 'external') {
+    externalIntegration(agent);
+    return;
+  }
   const currentModel = agent.provider ? recordName(agent.provider) : 'Workspace default';
   const content = element('div', undefined, 'agent-settings');
-  if (!isExternal) content.append(element('p', 'Model: ' + currentModel));
-  if (agent.identifier) {
-    content.append(element('p', 'Trace identifier: ' + agent.identifier));
-    const example = {
-      agent_id:agent.identifier, environment:'local', name:'handle_request',
-      input:{message:'Hello'}, output:{message:'Hi'}
-    };
-    if (isExternal) content.append(payload('POST /api/traces', example));
-    if (isExternal && location.protocol === 'https:') {
-      const keys = iconButton('key', 'Open API keys', 'button');
-      keys.addEventListener('click', () => {
-        byId('modal').close();
-        loadModule('billing').then(() => byId('billing-api-keys')?.scrollIntoView());
-      });
-      controls.append(keys);
-    }
-  }
+  content.append(element('p', 'Model: ' + currentModel));
+  if (agent.identifier) content.append(element('p', 'Trace identifier: ' + agent.identifier));
   const models = studioModels();
-  if (!isExternal && agent.kind === 'agent') {
+  if (agent.kind === 'agent') {
     const choices = models.slice();
     if (agent.provider && !choices.some(([id]) => id === agent.provider)) choices.unshift([agent.provider, recordName(agent.provider)]);
     if (!agent.provider && choices.length) choices.unshift(['', 'Workspace default']);
@@ -538,7 +605,6 @@ function agentSettings(agent, returnTo = 'agents') {
       await loadModule(returnTo, agent.id);
     }));
   }
-  content.append(controls);
   openModal(agent.name, [content]);
 }
 
@@ -831,6 +897,9 @@ function agentRegistry() {
       const details = element('button', agent.name, 'agent-name');
       details.addEventListener('click', () => agentSettings(agent));
       labels.append(details, element('p', agent.description || (external ? 'External agent' : 'Studio agent')));
+      const observed = activity.has(agent.identifier);
+      if (external && tracesReady) labels.append(element('span', observed ? 'Trace received' : 'Awaiting first trace',
+        observed ? 'pill success' : 'pill'));
       identity.append(avatar, labels);
       const actions = element('div', undefined, 'agent-actions');
       if (agent.identifier) {
@@ -839,7 +908,12 @@ function agentRegistry() {
         openTraces.addEventListener('click', () => openAgentTraces(agent));
         actions.append(openTraces);
       }
-      if (!external) {
+      if (external) {
+        const setup = iconButton('external', observed ? 'Integration' : 'Set up', 'button');
+        setup.setAttribute('aria-label', 'Integration setup for ' + agent.name);
+        setup.addEventListener('click', () => externalIntegration(agent));
+        actions.append(setup);
+      } else {
         const studio = iconButton('studio', 'Open Studio', 'button');
         studio.setAttribute('aria-label', 'Open ' + agent.name + ' in Studio');
         studio.addEventListener('click', () => loadModule('studio', agent.id));

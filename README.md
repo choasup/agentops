@@ -45,7 +45,7 @@ npx wrangler deploy
 npx wrangler secret put AGENTOPS_INGEST_TOKEN
 ```
 
-生产工作区须先登录。首次登录会接管该浏览器的访客工作区，此后可在其他设备用同一个邮箱继续使用。外部 Agent 从 **Billing → API Keys** 创建具有 **Send traces** 权限的密钥，调用 `POST /api/traces` 时使用 Bearer 请求头。部署后可用 `GET /healthz` 检查服务状态。
+生产工作区须先登录。首次登录会接管该浏览器的访客工作区，此后可在其他设备用同一个邮箱继续使用。外部 Agent 注册后会显示接入步骤。到 **Billing → API Keys** 创建具有 **Send traces** 权限的密钥，从你的应用携带 Bearer Key 和 Agent ID 调用 `POST /api/traces`。回到 Agent 列表的 **Set up** 或 **Integration**，检查首条 Trace 是否收到。部署后可用 `GET /healthz` 检查服务状态。
 
 如需调用真实模型，在 Worker 中设置 `TRACE_STUDIO_MODEL` 和 `TRACE_STUDIO_MODEL_URL`，并通过 `wrangler secret put TRACE_STUDIO_MODEL_KEY` 配置模型密钥。
 
