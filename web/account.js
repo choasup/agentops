@@ -242,7 +242,7 @@ async function boot() {
     byId('workspace-label').textContent = accountStatus?.user ? 'Personal workspace' : 'Local workspace';
     byId('workspace-shell').hidden = false;
     startTraceMonitoring();
-    await loadModule(new URL(location.href).searchParams.has('checkout') ? 'keys' : 'agents');
+    await loadModule(new URL(location.href).searchParams.has('checkout') ? 'billing' : 'agents');
   } catch (error) {
     const retry = element('button', 'Retry', 'button primary');
     retry.addEventListener('click', boot, {once:true});

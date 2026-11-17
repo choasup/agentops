@@ -45,7 +45,7 @@ npx wrangler deploy
 npx wrangler secret put AGENTOPS_INGEST_TOKEN
 ```
 
-生产工作区须先登录。首次登录会接管该浏览器的访客工作区，此后可在其他设备用同一个邮箱继续使用。外部 Agent 从 **API Keys** 创建具有 **Send traces** 权限的密钥，调用 `POST /api/traces` 时使用 Bearer 请求头。部署后可用 `GET /healthz` 检查服务状态。
+生产工作区须先登录。首次登录会接管该浏览器的访客工作区，此后可在其他设备用同一个邮箱继续使用。外部 Agent 从 **Billing → API Keys** 创建具有 **Send traces** 权限的密钥，调用 `POST /api/traces` 时使用 Bearer 请求头。部署后可用 `GET /healthz` 检查服务状态。
 
 如需调用真实模型，在 Worker 中设置 `TRACE_STUDIO_MODEL` 和 `TRACE_STUDIO_MODEL_URL`，并通过 `wrangler secret put TRACE_STUDIO_MODEL_KEY` 配置模型密钥。
 
@@ -63,7 +63,7 @@ Cloudflare Workers AI 测试连接使用独立的私有 Worker。新账号部署
 
 **Models** 支持 DeepSeek、阿里云百炼（北京预设）和自定义 OpenAI 兼容接口。百炼的区域地址要与供应商 API Key 一致，可以填业务空间专属域名。保存后可发消息测试、更新连接或轮换密钥。Agent 可以更换绑定的模型。模型供应商的密钥在后端加密保存，不能从列表读出。保留部署用的 `AGENTOPS_INGEST_TOKEN`，更换它会使已加密的模型密钥和已签发的 Agent Deck API Key 失效。
 
-**API Keys** 签发的是 Agent Deck 密钥。密钥创建时显示一次，服务端仅保留摘要，支持查看最近使用时间和即时撤销。权限按接口划分：
+**Billing → API Keys** 签发的是 Agent Deck 密钥。密钥创建时显示一次，服务端仅保留摘要，支持查看最近使用时间和即时撤销。权限按接口划分：
 
 | 权限 | 接口 |
 | --- | --- |
@@ -91,7 +91,7 @@ curl https://agentdeck.cloudmoro.com/v1/chat/completions \
   -d '{"model":"deepseek-flash","messages":[{"role":"user","content":"Say hello"}],"max_tokens":32}'
 ```
 
-首版支持非流式文本调用。账号余额以美元计，按实际缓存输入、普通输入和输出 Token 分别计价，固定为每百万 Token USD 0.006、0.30 和 1.20。余额、账单及各 Key 的调用汇总在 **API Keys** 查看。响应中的 `agent_deck.trace_id` 对应同一笔扣费和 Trace，`cost_nanos` 的单位是十亿分之一美元。
+首版支持非流式文本调用。账号余额以美元计，按实际缓存输入、普通输入和输出 Token 分别计价，固定为每百万 Token USD 0.006、0.30 和 1.20。余额、账单及各 Key 的调用汇总在 **Billing** 查看。响应中的 `agent_deck.trace_id` 对应同一笔扣费和 Trace，`cost_nanos` 的单位是十亿分之一美元。
 
 充值使用 Stripe Checkout。为 Worker 配置 `STRIPE_SECRET_KEY` 和 `STRIPE_WEBHOOK_SECRET`，将 Stripe 的 `checkout.session.completed` 发往 `https://agentdeck.cloudmoro.com/api/billing/stripe`。到账以通过签名验证的已支付事件为准。只在独立测试工作区和独立存储环境使用 `BILLING_TEST_MODE=true` 与 Stripe 测试密钥。当前余额账本记录充值和模型消费，退款与拒付需人工对账。
 

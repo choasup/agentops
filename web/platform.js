@@ -1,6 +1,6 @@
 const platformContent = byId('platform-content');
 const modules = {
-  keys: ['API Keys', 'Create scoped credentials for applications using this workspace.'],
+  billing: ['Billing', 'Manage your balance, review usage, and access API keys.'],
   models: ['Models', 'Manage the model connections your agents run on.'],
   datasets: ['Datasets', 'Curate examples and reference outputs for evaluation.'],
   experiments: ['Experiments', 'Evaluate prompt versions against a dataset and compare scores.'],
@@ -71,7 +71,9 @@ function billingPanels() {
     });
     balance.append(topup.querySelector('form'));
   }
-  const activity = listPanel('Recent billing activity', billing.entries.map(entry => {
+  if (!billing.entries.length) return [balance, listPanel('Recent billing activity', [])];
+  const entries = element('div', undefined, 'billing-entries');
+  entries.append(...billing.entries.map(entry => {
     const item = element('div', undefined, 'billing-entry');
     const key = apiKeys.find(key => key.id === entry.key_id);
     item.append(
@@ -85,8 +87,7 @@ function billingPanels() {
       ' cached) · ' + number.format(entry.output_tokens) + ' output'), traceLink(entry.reference));
     return item;
   }));
-  activity.classList.add('wide');
-  return [balance, activity];
+  return [balance, listPanel('Recent billing activity', [entries])];
 }
 
 function hostedModelPanel() {
@@ -102,8 +103,8 @@ function hostedModelPanel() {
   }
   const price = element('p', billingMoney(billing.prices.cached * 1e6) + ' cached input · ' +
     billingMoney(billing.prices.input * 1e6) + ' input · ' + billingMoney(billing.prices.output * 1e6) + ' output per 1M tokens');
-  const keys = iconButton('key', 'Manage balance and API keys', 'button');
-  keys.addEventListener('click', () => loadModule('keys'));
+  const keys = iconButton('wallet', 'Open billing', 'button');
+  keys.addEventListener('click', () => loadModule('billing'));
   panel.append(price, keys);
   return panel;
 }
@@ -213,8 +214,14 @@ function renderModule(module, selectedTarget) {
     panels.push(modelsWorkspace());
   }
 
-  if (module === 'keys') {
+  if (module === 'billing') {
     if (billing) panels.push(...billingPanels());
+    const keySection = element('section', undefined, 'billing-keys wide');
+    keySection.id = 'billing-api-keys';
+    keySection.append(element('h2', 'API Keys'));
+    const keyPanels = element('div', undefined, 'module-grid');
+    keySection.append(keyPanels);
+    panels.push(keySection);
     const scopes = element('fieldset', undefined, 'key-scopes');
     scopes.append(element('legend', 'Permissions'));
     for (const [value, label] of [
@@ -228,11 +235,11 @@ function renderModule(module, selectedTarget) {
       wrapper.append(option, document.createTextNode(label));
       scopes.append(wrapper);
     }
-    panels.push(formPanel('Create API key', [nameField(), scopes], 'Generate key', async data => {
+    keyPanels.append(formPanel('Create API key', [nameField(), scopes], 'Generate key', async data => {
       const requested = Array.from(scopes.querySelectorAll('input:checked'), input => input.value);
       const key = await keyRequest('', {name:data.name, scopes:requested});
-      if (activeModule !== 'keys' || platformContent.hidden) return;
-      await loadModule('keys');
+      if (activeModule !== 'billing' || platformContent.hidden) return;
+      await loadModule('billing');
       const value = element('pre', key.token);
       const copy = iconButton('copy', 'Copy API key', 'button primary');
       copy.addEventListener('click', async () => {
@@ -243,7 +250,7 @@ function renderModule(module, selectedTarget) {
         element('p', 'Copy this key now. It is displayed once.'), value, copy
       ]);
     }));
-    panels.push(listPanel('Workspace keys', apiKeys.map(key => {
+    keyPanels.append(listPanel('Workspace keys', apiKeys.map(key => {
       const item = expandable(key.name + ' · ' + key.prefix + '… · ' + (key.revoked ? 'Revoked' : 'Active'), {
         permissions:key.scopes, created:key.created, last_used:key.last_used, revoked:key.revoked
       });
@@ -258,7 +265,7 @@ function renderModule(module, selectedTarget) {
         revoke.disabled = true;
         try {
           await keyRequest('/revoke', {id:key.id});
-          await loadModule('keys');
+          await loadModule('billing');
         } catch (error) {
           result.textContent = error.message;
           revoke.disabled = false;
@@ -267,11 +274,13 @@ function renderModule(module, selectedTarget) {
       item.append(revoke, result);
       return item;
     })));
-    panels.push(listPanel('Use the API', [
+    const apiHelp = listPanel('Use the API', [
       element('p', 'Send an Authorization: Bearer header with your workspace API key.'),
       element('pre', (billing ? 'POST /v1/chat/completions\n' : '') +
         'GET /api/agents\nPOST /api/platform/runs\nGET /api/traces\nPOST /api/traces')
-    ]));
+    ]);
+    apiHelp.classList.add('wide');
+    keyPanels.append(apiHelp);
   }
 
   if (module === 'datasets') {
@@ -444,7 +453,7 @@ function agentSettings(agent, returnTo = 'agents') {
       const keys = iconButton('key', 'Open API keys', 'button');
       keys.addEventListener('click', () => {
         byId('modal').close();
-        loadModule('keys');
+        loadModule('billing').then(() => byId('billing-api-keys')?.scrollIntoView());
       });
       controls.append(keys);
     }
@@ -497,9 +506,11 @@ function studioWorkspace(targets, selectedTarget) {
   const billingField = field('billing_key', 'Charge to API key', availableKeys.map(key => [key.id, key.name]));
   const billingInput = billingField.querySelector('select');
   if (availableKeys.length === 1) billingInput.value = availableKeys[0].id;
-  const manageKeys = iconButton('key', 'Manage balance and API keys', 'button');
+  const manageKeys = iconButton('wallet', 'Open billing', 'button');
   manageKeys.type = 'button';
-  manageKeys.addEventListener('click', () => loadModule('keys'));
+  manageKeys.addEventListener('click', () => loadModule('billing').then(() => {
+    if (!availableKeys.length) byId('billing-api-keys')?.scrollIntoView();
+  }));
   const message = element('textarea');
   message.rows = 2;
   message.required = true;
@@ -799,14 +810,14 @@ async function loadModule(module, selectedTarget) {
   });
   try {
     if (module === 'feedback') await refresh();
-    if (['keys','models','agents','studio'].includes(module)) {
+    if (['billing','models','agents','studio'].includes(module)) {
       const nextBilling = await billingRequest();
-      const nextKeys = module === 'keys' || (module === 'studio' && nextBilling) ? await keyRequest() : null;
+      const nextKeys = module === 'billing' || (module === 'studio' && nextBilling) ? await keyRequest() : null;
       if (activeModule !== module || platformContent.hidden) return;
       billing = nextBilling;
       if (nextKeys) apiKeys = nextKeys;
     }
-    if (module !== 'keys') {
+    if (module !== 'billing') {
       const next = await platformRequest();
       if (activeModule !== module || platformContent.hidden) return;
       records = next;
