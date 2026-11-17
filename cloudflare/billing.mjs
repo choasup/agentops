@@ -29,7 +29,7 @@ export async function checkout(env, workspace, cents, origin) {
   });
   const response = await fetch('https://api.stripe.com/v1/checkout/sessions', {
     method:'POST', body:fields, headers:{Authorization:'Bearer ' + env.STRIPE_SECRET_KEY},
-    redirect:'error', signal:AbortSignal.timeout(10_000)
+    redirect:'manual', signal:AbortSignal.timeout(10_000)
   });
   if (!response.ok) throw new BillingError('Could not open checkout', 502);
   const {url} = await response.json();
@@ -154,7 +154,7 @@ export class Billing {
       const response = await fetch('https://api.deepseek.com/chat/completions', {
         method:'POST', headers:{'Content-Type':'application/json', Authorization:'Bearer ' + this.env.DEEPSEEK_API_KEY},
         body:JSON.stringify({model:hostedModel, messages, max_tokens:maxTokens, thinking:{type:'disabled'}, stream:false}),
-        redirect:'error', signal:AbortSignal.timeout(30_000)
+        redirect:'manual', signal:AbortSignal.timeout(30_000)
       });
       if (!response.ok) throw new BillingError('DeepSeek returned HTTP ' + response.status, 502);
       const completion = await response.json();
