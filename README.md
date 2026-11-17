@@ -40,11 +40,10 @@ Worker 在 `agentops.cloudmoro.com` 提供页面和 API。数据保存在 Cloudf
 
 ```sh
 npx wrangler deploy
-npx wrangler secret put AGENTOPS_PASSWORD
 npx wrangler secret put AGENTOPS_INGEST_TOKEN
 ```
 
-网页登录用户名为 `agentops`。外部 Agent 向 `POST /api/traces` 发送 JSON 时使用 `Authorization: Bearer <AGENTOPS_INGEST_TOKEN>`。该令牌仅允许写入 Trace。部署后可用 `GET /healthz` 检查服务状态。
+打开页面即可进入当前浏览器的独立工作区。请保留站点 Cookie 以便下次访问同一工作区。外部 Agent 向 `POST /api/traces` 发送 JSON 时，从 Agent Registry 展开 Agent 并点击 **Show ingestion token**，复制该工作区的 Authorization 请求头。该令牌仅允许写入 Trace。部署后可用 `GET /healthz` 检查服务状态。
 
 如需调用真实模型，在 Worker 中设置 `TRACE_STUDIO_MODEL` 和 `TRACE_STUDIO_MODEL_URL`，并通过 `wrangler secret put TRACE_STUDIO_MODEL_KEY` 配置模型密钥。
 

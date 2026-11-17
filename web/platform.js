@@ -222,6 +222,26 @@ function renderModule(module, selectedTarget) {
           input:{message:'Hello'}, output:{message:'Hi'}
         };
         item.append(element('p', 'POST /api/traces'), element('pre', JSON.stringify(example, null, 2)));
+        if (location.protocol === 'https:') {
+          const reveal = element('button', 'Show ingestion token', 'button');
+          const token = element('pre');
+          token.hidden = true;
+          reveal.addEventListener('click', async () => {
+            reveal.disabled = true;
+            try {
+              const response = await fetch('/api/workspace', {cache:'no-store'});
+              const config = await response.json();
+              if (!response.ok) throw new Error(config.error);
+              token.textContent = 'Authorization: Bearer ' + config.ingest_token;
+            } catch (error) {
+              token.textContent = error.message;
+            } finally {
+              token.hidden = false;
+              reveal.disabled = false;
+            }
+          });
+          item.append(reveal, token);
+        }
       }
       if (agent.source !== 'external') {
         const open = element('button', 'Open in Studio', 'button');

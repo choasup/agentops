@@ -18,36 +18,84 @@ function requiredText(data, key) {
   return value.trim();
 }
 
-async function equal(left, right) {
-  const encoder = new TextEncoder();
-  const hashes = await Promise.all([left, right].map(value =>
-    crypto.subtle.digest('SHA-256', encoder.encode(value))));
-  return crypto.subtle.timingSafeEqual(hashes[0], hashes[1]);
+const workspaceCookie = '__Host-agentops-workspace';
+const workspacePattern = /^[0-9a-f]{32}$/;
+
+function workspaceFrom(request) {
+  const cookies = request.headers.get('Cookie') ?? '';
+  return cookies.split(';').map(cookie => cookie.trim()).find(cookie =>
+    cookie.startsWith(workspaceCookie + '='))?.slice(workspaceCookie.length + 1);
+}
+
+async function ingestionKey(secret) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('agentops-ingest:' + secret));
+  return crypto.subtle.importKey('raw', digest, 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+
+async function ingestionToken(workspace, secret) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const payload = await crypto.subtle.encrypt({name:'AES-GCM', iv}, await ingestionKey(secret),
+    new TextEncoder().encode(workspace));
+  return btoa(String.fromCharCode(...iv, ...new Uint8Array(payload)))
+    .replaceAll('+', '-').replaceAll('/', '_');
+}
+
+async function ingestionWorkspace(token, secret) {
+  if (!secret || !/^[a-zA-Z0-9_-]{80}$/.test(token)) return null;
+  try {
+    const bytes = Uint8Array.from(atob(token.replaceAll('-', '+').replaceAll('_', '/')),
+      char => char.charCodeAt(0));
+    const payload = await crypto.subtle.decrypt({name:'AES-GCM', iv:bytes.slice(0, 12)},
+      await ingestionKey(secret), bytes.slice(12));
+    return new TextDecoder().decode(payload);
+  } catch {
+    return null;
+  }
 }
 
 export default {
   async fetch(request, env) {
     const {pathname, origin} = new URL(request.url);
     if (pathname === '/healthz' && request.method === 'GET') return json({status:'ok'});
-    if (!env.AGENTOPS_PASSWORD) return json({error:'Workspace access has not been configured'}, 503);
+
+    let workspace = workspaceFrom(request);
+    if (!pathname.startsWith('/api/')) {
+      const response = await env.ASSETS.fetch(request);
+      if (pathname !== '/' || request.method !== 'GET' || !response.ok) return response;
+      const page = new Response(response.body, response);
+      page.headers.set('Cache-Control', 'private, no-store');
+      if (!workspacePattern.test(workspace ?? '')) {
+        page.headers.append('Set-Cookie', workspaceCookie + '=' + id() +
+          '; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Strict');
+      }
+      return page;
+    }
+
     const authorization = request.headers.get('Authorization') ?? '';
     const ingestion = pathname === '/api/traces' && request.method === 'POST';
-    const access = await equal(authorization, 'Basic ' + btoa('agentops:' + env.AGENTOPS_PASSWORD));
-    const token = ingestion && env.AGENTOPS_INGEST_TOKEN &&
-      await equal(authorization, 'Bearer ' + env.AGENTOPS_INGEST_TOKEN);
-    if (!access && !token) {
-      return new Response('Sign in to AgentOps', {
-        status:401, headers:{...noStore, 'WWW-Authenticate':'Basic realm="AgentOps", charset="UTF-8"'}
-      });
+    let usesToken = false;
+    if (ingestion && authorization.startsWith('Bearer ')) {
+      const candidate = await ingestionWorkspace(authorization.slice(7), env.AGENTOPS_INGEST_TOKEN);
+      if (!workspacePattern.test(candidate ?? '')) {
+        return json({error:'Invalid workspace ingestion token'}, 401);
+      }
+      workspace = candidate;
+      usesToken = true;
     }
-    if (request.method === 'POST' && !token) {
+    if (!workspacePattern.test(workspace ?? '')) {
+      return json({error:'Open AgentOps in a browser to start a workspace'}, 401);
+    }
+    if (request.method === 'POST' && !usesToken) {
       const source = request.headers.get('Origin');
       if ((source && source !== origin) || request.headers.get('Sec-Fetch-Site') === 'cross-site') {
         return json({error:'Cross-origin write rejected'}, 403);
       }
     }
-    if (pathname.startsWith('/api/')) return env.WORKSPACE.getByName('default').fetch(request);
-    return env.ASSETS.fetch(request);
+    if (pathname === '/api/workspace' && request.method === 'GET') {
+      if (!env.AGENTOPS_INGEST_TOKEN) return json({error:'Trace ingestion has not been configured'}, 503);
+      return json({ingest_token:await ingestionToken(workspace, env.AGENTOPS_INGEST_TOKEN)});
+    }
+    return env.WORKSPACE.getByName('browser:' + workspace).fetch(request);
   }
 };
 
