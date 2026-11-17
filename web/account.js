@@ -26,7 +26,7 @@ function accountForm(purpose, inline = false) {
   const form = element('form', undefined, 'module-form auth-form');
   const channels = [];
   if (login || accountStatus.email_configured) channels.push(['email', '邮箱']);
-  if (login || accountStatus.sms_configured) channels.push(['phone', '手机号']);
+  if (accountStatus.sms_configured) channels.push(['phone', '手机号']);
   const method = element('fieldset', undefined, 'auth-method');
   const methods = element('div', undefined, 'auth-method-options');
   method.append(element('legend', login ? '登录方式' : '验证方式'), methods);
@@ -163,7 +163,7 @@ function accountForm(purpose, inline = false) {
   const actions = element('div', undefined, 'auth-actions');
   const destinations = purpose === 'login' ? [['register','创建账号'], ['reset','忘记密码']] : [['login','返回登录']];
   for (const [destination, label] of destinations) {
-    const link = element(inline ? 'a' : 'button', label, 'button quiet');
+    const link = element(inline ? 'a' : 'button', label, 'auth-link');
     if (inline) {
       const url = new URL(location.href);
       if (destination === 'login') url.searchParams.delete('auth');

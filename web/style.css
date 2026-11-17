@@ -493,7 +493,8 @@ dialog::backdrop {background: #111a3a70}
 .nav.active .ui-icon {stroke-width:1.9}
 
 .sign-in-card .auth-actions {justify-content:space-between}
-.auth-actions a.button {text-decoration:none}
+.auth-link {display:inline-flex; align-items:center; min-height:36px; border:0; padding:0; background:none; color:var(--accent-dark); font:inherit; font-weight:620; text-decoration:none; cursor:pointer}
+.auth-link:hover {text-decoration:underline; text-underline-offset:3px}
 
 .agent-model-setup {display:grid; gap:10px; padding:14px 0}
 .agent-model-setup .provider-grid {grid-template-columns:repeat(auto-fit,minmax(min(100%, 170px),1fr))}
