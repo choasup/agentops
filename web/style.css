@@ -526,3 +526,15 @@ dialog::backdrop {background: #111a3a70}
 .billing-keys > h2 {margin:12px 0 10px}
 .billing-entries {max-height:340px; overflow:auto; overscroll-behavior:contain; margin-top:10px}
 .balance-amount {margin-top:8px; font-size:24px; overflow-wrap:anywhere}
+
+.agent-template-section {margin:16px 0}
+.agent-template-grid {display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,145px),1fr)); gap:8px; margin-top:8px}
+.agent-template {display:grid; gap:5px; justify-items:start; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--ink); text-align:left; cursor:pointer}
+.agent-template:hover {border-color:#b6c0dc; background:var(--accent-soft)}
+.agent-template small {color:var(--muted)}
+.agent-template .ui-icon {color:var(--accent-dark)}
+.agent-form-fields {display:grid; gap:12px}
+.agent-form-identity {display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr)); gap:10px}
+.studio-stream > .button {align-self:start; margin-top:8px}
+#modal:has(.agent-builder) {width:min(690px,calc(100% - 24px))}
+.agent-builder-modes {grid-template-columns:repeat(2,minmax(0,1fr))}

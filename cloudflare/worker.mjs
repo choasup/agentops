@@ -19,6 +19,21 @@ function requiredText(data, key) {
   return value.trim();
 }
 
+function agentProfile(data) {
+  const profile = {name:requiredText(data, 'name'), instructions:requiredText(data, 'instructions')};
+  for (const [key, limit] of [['description', 240], ['starter', 1000]]) {
+    const value = data[key] ?? '';
+    if (typeof value !== 'string' || value.length > limit) throw new InputError(key + ' exceeds ' + limit + ' characters');
+    profile[key] = value.trim();
+  }
+  const limit = data.max_tokens;
+  if (limit != null) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 4096) throw new InputError('Output limit must be between 1 and 4096 tokens');
+    profile.max_tokens = limit;
+  }
+  return profile;
+}
+
 async function encryptionKey(secret, purpose) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(purpose + ':' + secret));
   return crypto.subtle.importKey('raw', digest, 'AES-GCM', false, ['encrypt', 'decrypt']);
@@ -234,7 +249,7 @@ export class Workspace extends DurableObject {
     return this.saveTrace(trace);
   }
 
-  async execute(prompt, value, instructions, provider) {
+  async execute(prompt, value, instructions, provider, maxTokens) {
     let content = value;
     if (instructions) {
       if (typeof value !== 'string' || !value.trim()) throw new InputError('Enter a message');
@@ -265,7 +280,7 @@ export class Workspace extends DurableObject {
     try {
       const adapter = endpoint === this.env.MODEL_ADAPTER_URL ? this.env.MODEL_ADAPTER : null;
       const request = new Request(endpoint, {
-        method:'POST', headers, body:JSON.stringify({model, messages}),
+        method:'POST', headers, body:JSON.stringify({model, messages, max_tokens:maxTokens}),
         ...(adapter ? {} : {signal:controller.signal}), redirect:'manual'
       });
       const response = await (adapter ? adapter.fetch(request) : fetch(request));
@@ -366,19 +381,26 @@ export class Workspace extends DurableObject {
       const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'agent';
       const agent = {name, source, identifier:slug + '-' + id().slice(0, 12)};
       if (source === 'studio') {
-        agent.instructions = requiredText(data, 'instructions');
+        Object.assign(agent, agentProfile(data));
         if (data.provider === hostedProviderId && this.env.DEEPSEEK_API_KEY) agent.provider = hostedProviderId;
         else if (data.provider) agent.provider = find('provider', 'model').id;
         else if (!this.env.TRACE_STUDIO_MODEL) throw new InputError('Choose a model before creating the agent');
       }
       return this.save('agent', agent);
     }
-    if (action === 'agent-model') {
+    if (action === 'agent-model' || action === 'agent-update') {
       const agent = find('agent', 'agent');
       if (agent.source === 'external') throw new InputError('External agents do not use a Studio model');
-      const provider = data.provider === hostedProviderId && this.env.DEEPSEEK_API_KEY
-        ? hostedProviderId : find('provider', 'model').id;
+      let provider = agent.provider;
+      if (action === 'agent-model' || (data.provider && data.provider !== agent.provider)) {
+        provider = data.provider === hostedProviderId && this.env.DEEPSEEK_API_KEY
+          ? hostedProviderId : find('provider', 'model').id;
+      }
       const updated = {...agent, provider};
+      if (action === 'agent-update') {
+        delete updated.max_tokens;
+        Object.assign(updated, agentProfile(data));
+      }
       this.sql.exec('UPDATE records SET payload=? WHERE id=?', JSON.stringify(updated), agent.id);
       return updated;
     }
@@ -419,7 +441,7 @@ export class Workspace extends DurableObject {
         if (typeof data.input !== 'string' || !data.input.trim()) throw new InputError('Enter a test message');
         return this.billing.complete({model:hostedModel, messages:[
           {role:'system', content:target.instructions}, {role:'user', content:data.input}
-        ]}, this.billableKey(data.billing_key), target);
+        ], max_tokens:target.max_tokens}, this.billableKey(data.billing_key), target);
       }
       const prompt = records.find(item => item.id === target.prompt);
       const provider = records.find(item => item.kind === 'model' && item.id === target.provider);
@@ -429,7 +451,7 @@ export class Workspace extends DurableObject {
       const start = performance.now();
       let tokens = 0;
       try {
-        const result = await this.execute(prompt, data.input, target.instructions, provider);
+        const result = await this.execute(prompt, data.input, target.instructions, provider, target.max_tokens);
         step.output = result.output;
         tokens = result.tokens;
         if (model) step.tokens = tokens;

@@ -366,9 +366,79 @@ function brandMark() {
   return mark;
 }
 
+const agentTemplates = [
+  {name:'Support assistant', description:'Draft answers to customer questions.', icon:'agents',
+    instructions:'Answer customer questions clearly. Ask for missing details and say when you cannot verify an answer.',
+    starter:'A customer cannot access their account. What should I ask first?'},
+  {name:'Research assistant', description:'Summarize material and identify gaps.', icon:'prompt',
+    instructions:'Summarize the material provided. Separate facts from interpretation and point out missing evidence.',
+    starter:'What information should I collect before comparing two products?'},
+  {name:'Writing assistant', description:'Revise text for a specific audience.', icon:'edit',
+    instructions:'Revise the supplied text for the stated audience. Preserve its meaning and avoid adding unsupported claims.',
+    starter:'Rewrite this to sound clear and professional: Please get back to me soon.'}
+];
+
+function agentFields(data, models) {
+  const root = element('div', undefined, 'agent-form-fields');
+  const identity = element('div', undefined, 'agent-form-identity');
+  const name = field('name', 'Agent name', 'text', data.name ?? '');
+  const description = field('description', 'Description', 'text', data.description ?? '');
+  const descriptionInput = description.querySelector('input');
+  descriptionInput.required = false;
+  descriptionInput.maxLength = 240;
+  descriptionInput.placeholder = 'What is this agent for?';
+  identity.append(name, description);
+  const instructions = field('instructions', 'Agent instructions', 'textarea', data.instructions ?? '');
+  instructions.querySelector('textarea').placeholder = 'Describe what the agent should do and how it should respond.';
+  const model = field('provider', 'Model', models, data.provider ?? '');
+  const modelInput = model.querySelector('select');
+  if (models.length) modelInput.value = data.provider ?? models[0][0];
+  else modelInput.disabled = true;
+  model.hidden = !models.length;
+  const starter = field('starter', 'Starter message', 'text', data.starter ?? '');
+  starter.querySelector('input').required = false;
+  starter.querySelector('input').maxLength = 1000;
+  starter.querySelector('input').placeholder = 'An optional first message to try in Studio';
+  const advanced = element('details', undefined, 'connection-advanced');
+  const limit = field('max_tokens', 'Maximum output tokens', 'number', data.max_tokens ?? '');
+  const limitInput = limit.querySelector('input');
+  limitInput.required = false;
+  limitInput.min = 1;
+  limitInput.max = 4096;
+  limitInput.placeholder = 'Model default';
+  advanced.append(element('summary', 'Run settings'), limit);
+  advanced.open = data.max_tokens != null && data.max_tokens !== '';
+  root.append(identity, model, instructions, starter, advanced);
+  return root;
+}
+
+function agentPayload(data) {
+  return {...data, max_tokens:data.max_tokens ? Number(data.max_tokens) : null};
+}
+
+function templatePicker(fields) {
+  const section = element('section', undefined, 'agent-template-section');
+  const grid = element('div', undefined, 'agent-template-grid');
+  for (const template of agentTemplates) {
+    const button = element('button', undefined, 'agent-template');
+    button.type = 'button';
+    button.append(icon(template.icon), element('strong', template.name), element('small', template.description));
+    button.addEventListener('click', () => {
+      fields.querySelector('[name=name]').value ||= template.name;
+      for (const key of ['description', 'instructions', 'starter']) {
+        fields.querySelector('[name=' + key + ']').value = template[key];
+      }
+      fields.querySelector('[name=instructions]').focus();
+    });
+    grid.append(button);
+  }
+  section.append(element('h3', 'Start from a template'), grid);
+  return section;
+}
+
 function openCreateAgent({preferredModel, draft = {}} = {}) {
-  const body = element('div', undefined, 'agent-mode');
-  const buttons = element('div', undefined, 'agent-mode');
+  const body = element('div', undefined, 'agent-mode agent-builder');
+  const buttons = element('div', undefined, 'agent-mode agent-builder-modes');
   const studio = iconButton('studio', 'Build in Studio', 'button');
   const external = iconButton('external', 'Connect an external agent', 'button');
   buttons.append(studio, external);
@@ -385,23 +455,16 @@ function openCreateAgent({preferredModel, draft = {}} = {}) {
     });
   }
   if (models.length) {
-    const name = field('name', 'Agent name', 'text', draft.name ?? '');
-    const instructions = field('instructions', 'Agent instructions', 'textarea', draft.instructions ?? '');
-    instructions.querySelector('textarea').placeholder = 'Describe what the agent should do and how it should respond.';
-    const model = field('provider', 'Model', models);
-    const modelInput = model.querySelector('select');
-    modelInput.value = preferredModel ?? models[0][0];
-    const form = formPanel('Agent configuration', [
-      name, model, instructions
-    ], 'Create and open Studio', async data => {
-      const agent = await platformRequest('/agents', {...data, source:'studio'});
+    const fields = agentFields({...draft, provider:preferredModel}, models);
+    const form = formPanel('Agent configuration', [fields], 'Create and open Studio', async data => {
+      const agent = await platformRequest('/agents', {...agentPayload(data), source:'studio'});
       byId('modal').close();
       await loadModule('studio', agent.id);
     });
     const add = iconButton('plus', 'Connect another model', 'button quiet');
     add.addEventListener('click', () => {
-      const nextDraft = {name:name.querySelector('input').value, instructions:instructions.querySelector('textarea').value};
-      const previousModel = modelInput.value;
+      const nextDraft = Object.fromEntries(new FormData(form.querySelector('form')));
+      const previousModel = nextDraft.provider;
       const returnToAgent = () => openCreateAgent({preferredModel:previousModel, draft:nextDraft});
       function choose() {
         const back = iconButton('arrow', 'Back to agent', 'button quiet setup-back');
@@ -410,7 +473,7 @@ function openCreateAgent({preferredModel, draft = {}} = {}) {
       }
       choose();
     });
-    studioBody.append(form, add);
+    studioBody.append(templatePicker(fields), form, add);
   } else {
     const setup = element('section', undefined, 'agent-model-setup');
     setup.append(element('h3', 'Choose a model for your agent'),
@@ -459,11 +522,18 @@ function agentSettings(agent, returnTo = 'agents') {
     }
   }
   const models = studioModels();
-  if (!isExternal && location.protocol === 'https:' && models.length) {
-    const provider = field('provider', 'Model', models);
-    provider.querySelector('select').value = agent.provider ?? '';
-    content.append(formPanel('Change model', [provider], 'Save model', async data => {
-      await platformRequest('/agent-model', {...data, agent:agent.id});
+  if (!isExternal && agent.kind === 'agent') {
+    const choices = models.slice();
+    if (agent.provider && !choices.some(([id]) => id === agent.provider)) choices.unshift([agent.provider, recordName(agent.provider)]);
+    if (!agent.provider && choices.length) choices.unshift(['', 'Workspace default']);
+    const fields = agentFields({...agent, provider:agent.provider ?? ''}, choices);
+    const providerInput = fields.querySelector('select');
+    if (!agent.provider) {
+      providerInput.required = false;
+      if (choices.length) providerInput.remove(0);
+    }
+    content.append(formPanel('Agent configuration', [fields], 'Save changes', async data => {
+      await platformRequest('/agent-update', {...agentPayload(data), agent:agent.id});
       byId('modal').close();
       await loadModule(returnTo, agent.id);
     }));
@@ -591,7 +661,16 @@ function studioWorkspace(targets, selectedTarget) {
     }
     if (!selectedRun) {
       session.replaceChildren(element('h2', 'Test ' + current().name),
-        element('p', 'Run a test to see its response and execution trace.'));
+        element('p', current().description || 'Run a test to see its response and execution trace.'));
+      if (current().starter) {
+        const starter = iconButton('arrow', 'Use starter message', 'button');
+        starter.type = 'button';
+        starter.addEventListener('click', () => {
+          message.value = current().starter;
+          message.focus();
+        });
+        session.append(starter);
+      }
       return;
     }
     const run = selectedRun;
@@ -751,7 +830,7 @@ function agentRegistry() {
       const labels = element('div');
       const details = element('button', agent.name, 'agent-name');
       details.addEventListener('click', () => agentSettings(agent));
-      labels.append(details, element('p', external ? 'External agent' : 'Studio agent'));
+      labels.append(details, element('p', agent.description || (external ? 'External agent' : 'Studio agent')));
       identity.append(avatar, labels);
       const actions = element('div', undefined, 'agent-actions');
       if (agent.identifier) {

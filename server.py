@@ -71,6 +71,20 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError(kind + ' was not found')
             return record
 
+        def agent_profile():
+            profile = dict(name=required_text('name'), instructions=required_text('instructions'))
+            for field, limit in [('description', 240), ('starter', 1000)]:
+                value = data.get(field, '')
+                if not isinstance(value, str) or len(value) > limit:
+                    raise ValueError(f'{field} exceeds {limit} characters')
+                profile[field] = value.strip()
+            tokens = data.get('max_tokens')
+            if tokens is not None:
+                if type(tokens) is not int or not 1 <= tokens <= 4096:
+                    raise ValueError('Output limit must be between 1 and 4096 tokens')
+                profile['max_tokens'] = tokens
+            return profile
+
         if action == 'models':
             name = required_text('name')
             model = required_text('model')
@@ -110,12 +124,24 @@ class Handler(SimpleHTTPRequestHandler):
             slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')[:40].rstrip('-') or 'agent'
             agent = dict(name=name, source=source, identifier=slug + '-' + uuid4().hex[:12])
             if source == 'studio':
-                agent['instructions'] = required_text('instructions')
+                agent.update(agent_profile())
                 if data.get('provider'):
                     agent['provider'] = record_for('provider', 'model')['id']
                 elif not os.environ.get('TRACE_STUDIO_MODEL'):
                     raise ValueError('Choose a model before creating the agent')
             return self.save_record('agent', agent)
+        if action == 'agent-update':
+            agent = record_for('agent', 'agent')
+            if agent.get('source') == 'external':
+                raise ValueError('External agents do not use a Studio model')
+            agent.pop('max_tokens', None)
+            agent.update(agent_profile())
+            if data.get('provider'):
+                agent['provider'] = record_for('provider', 'model')['id']
+            with database() as connection:
+                connection.execute('UPDATE records SET payload=? WHERE id=?',
+                                   (json.dumps(agent, allow_nan=False), agent['id']))
+            return agent
 
         def render(template, value):
             variables = value if isinstance(value, dict) else {'input': value}
@@ -127,7 +153,7 @@ class Handler(SimpleHTTPRequestHandler):
                 return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
             return re.sub(r'\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}', substitute, template)
 
-        def execute(prompt, value, instructions=None, provider=None):
+        def execute(prompt, value, instructions=None, provider=None, max_tokens=None):
             if instructions is not None:
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError('Enter a message to run this agent')
@@ -150,6 +176,8 @@ class Handler(SimpleHTTPRequestHandler):
             if instructions is not None:
                 messages.insert(0, dict(role='system', content=instructions))
             payload = dict(model=model, messages=messages)
+            if max_tokens is not None:
+                payload['max_tokens'] = max_tokens
             try:
                 with build_opener(NoRedirect()).open(Request(endpoint, json.dumps(payload).encode(), headers), timeout=30) as response:
                     result = json.load(response)
@@ -234,7 +262,7 @@ class Handler(SimpleHTTPRequestHandler):
                 step['model'] = model
             tokens = 0
             try:
-                step['output'], tokens = execute(prompt, step['input'], instructions, provider)
+                step['output'], tokens = execute(prompt, step['input'], instructions, provider, target.get('max_tokens'))
                 if model:
                     step['tokens'] = tokens
                 status = 'success'
