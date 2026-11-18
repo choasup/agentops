@@ -1,5 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { Billing, BillingError, checkout, hostedModel, hostedProviderId, paymentWebhook } from './billing.mjs';
+import { docsConnection, searchDocs, verifyDocsConnection } from './mcp.mjs';
 import { cookie, cookieValue, emailConfigured, json, randomId as id, sessionCookie, sha256,
   smsConfigured, workspaceCookie, workspacePattern } from './accounts.mjs';
 export { Accounts } from './accounts.mjs';
@@ -214,6 +215,38 @@ export class Workspace extends DurableObject {
     }
   }
 
+  assignedDocsTool(records, agent, input) {
+    if (!agent.mcp_connection) return undefined;
+    const connection = records.find(item => item.kind === 'mcp_connection' &&
+      item.id === agent.mcp_connection && !item.revoked);
+    if (!connection || connection.tool !== docsConnection.tool) throw new InputError('This Agent’s MCP connection is no longer authorized');
+    if (typeof input !== 'string' || !input.trim() || input.length > 400) {
+      throw new InputError('Cloudflare Documentation search requires a message of 1 to 400 characters');
+    }
+    return async () => {
+      const current = this.rows('records').find(item => item.id === connection.id && !item.revoked);
+      if (!current) throw new BillingError('MCP connection is no longer authorized', 403);
+      try {
+        return {...await searchDocs(input.trim()), connection_id:connection.id};
+      } catch {
+        throw new BillingError('Cloudflare Documentation MCP could not return a result', 502);
+      }
+    };
+  }
+
+  authorizeDocsTool(records, data, agent) {
+    if (!Object.hasOwn(data, 'mcp_connection')) return;
+    if (!data.mcp_connection) {
+      delete agent.mcp_connection;
+      return;
+    }
+    if (agent.provider !== hostedProviderId) throw new InputError('This MCP tool requires Hosted DeepSeek');
+    const connection = records.find(item => item.kind === 'mcp_connection' &&
+      item.id === data.mcp_connection && !item.revoked && item.tool === docsConnection.tool);
+    if (!connection) throw new InputError('Choose an active read-only MCP connection');
+    agent.mcp_connection = connection.id;
+  }
+
   async evaluateVersion(version, agent, examples, records, billingKey) {
     const provider = records.find(item => item.kind === 'model' && item.id === version.provider);
     const results = [];
@@ -222,7 +255,8 @@ export class Workspace extends DurableObject {
         const result = version.provider === hostedProviderId
           ? await this.billing.complete({model:hostedModel, max_tokens:version.max_tokens, messages:[
             {role:'system', content:version.instructions}, {role:'user', content:example.input}
-          ]}, this.billableKey(billingKey), agent, {environment:'development', agent_version:version.id})
+          ]}, this.billableKey(billingKey), agent, {environment:'development', agent_version:version.id},
+          this.assignedDocsTool(records, version, example.input))
           : await this.execute(null, example.input, version.instructions, provider, version.max_tokens);
         results.push({example:example.id, input:example.input, expected:example.expected, output:result.output,
           passed:result.output.trim() === example.expected.trim(), ...(result.id ? {trace:result.id} : {})});
@@ -407,6 +441,21 @@ export class Workspace extends DurableObject {
         }
       }
     }
+    if (action === 'mcp-connect') {
+      if (data.provider !== 'cloudflare-docs') throw new InputError('Unknown MCP connection');
+      const existing = records.find(item => item.kind === 'mcp_connection' && !item.revoked);
+      if (existing) return existing;
+      try { await verifyDocsConnection(); }
+      catch { throw new BillingError('Could not verify the Cloudflare Documentation MCP tool', 502); }
+      return this.rows('records').find(item => item.kind === 'mcp_connection' && !item.revoked) ??
+        this.save('mcp_connection', {...docsConnection});
+    }
+    if (action === 'mcp-disconnect') {
+      const connection = find('connection', 'mcp_connection');
+      const revoked = {...connection, revoked:new Date().toISOString()};
+      this.sql.exec('UPDATE records SET payload=? WHERE id=?', JSON.stringify(revoked), revoked.id);
+      return revoked;
+    }
     if (action === 'datasets') return this.save('dataset', {name:requiredText(data, 'name')});
     if (action === 'examples') {
       const dataset = find('dataset', 'dataset');
@@ -427,6 +476,7 @@ export class Workspace extends DurableObject {
         if (data.provider === hostedProviderId && this.env.DEEPSEEK_API_KEY) agent.provider = hostedProviderId;
         else if (data.provider) agent.provider = find('provider', 'model').id;
         else if (!this.env.TRACE_STUDIO_MODEL) throw new InputError('Choose a model before creating the agent');
+        this.authorizeDocsTool(records, data, agent);
       }
       return this.save('agent', agent);
     }
@@ -442,7 +492,9 @@ export class Workspace extends DurableObject {
       if (action === 'agent-update') {
         delete updated.max_tokens;
         Object.assign(updated, agentProfile(data));
+        this.authorizeDocsTool(records, data, updated);
       }
+      if (provider !== hostedProviderId) delete updated.mcp_connection;
       this.sql.exec('UPDATE records SET payload=? WHERE id=?', JSON.stringify(updated), agent.id);
       return updated;
     }
@@ -451,11 +503,11 @@ export class Workspace extends DurableObject {
       if (agent.source === 'external') throw new InputError('External agents are versioned in your application');
       const label = requiredText(data, 'label');
       if (label.length > 80) throw new InputError('Use a version label of up to 80 characters');
-      const {name, instructions, description, starter, max_tokens, provider} = agent;
+      const {name, instructions, description, starter, max_tokens, provider, mcp_connection} = agent;
       const config = this.modelConfiguration(records, provider);
       const model_digest = await sha256(JSON.stringify(config));
       return this.save('agent_version', {agent:agent.id, label, name, instructions, description, starter,
-        max_tokens, provider, model:config.model, model_digest});
+        max_tokens, provider, mcp_connection, model:config.model, model_digest});
     }
     if (action === 'agent-releases') {
       const version = find('version', 'agent_version');
@@ -551,7 +603,8 @@ export class Workspace extends DurableObject {
         if (typeof data.input !== 'string' || !data.input.trim()) throw new InputError('Enter a test message');
         return this.billing.complete({model:hostedModel, messages:[
           {role:'system', content:target.instructions}, {role:'user', content:data.input}
-        ], max_tokens:target.max_tokens}, this.billableKey(data.billing_key), target, attribution);
+        ], max_tokens:target.max_tokens}, this.billableKey(data.billing_key), target, attribution,
+        this.assignedDocsTool(records, target, data.input));
       }
       const prompt = records.find(item => item.id === target.prompt);
       const provider = records.find(item => item.kind === 'model' && item.id === target.provider);

@@ -569,3 +569,6 @@ dialog::backdrop {background: #111a3a70}
 @media (max-width:760px) {
   .workspace-switch {margin:0 0 6px; max-width:320px}
 }
+
+.connection-card {display:grid; gap:9px; justify-items:start}
+.connection-card [role="status"]:empty {display:none}

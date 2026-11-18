@@ -55,7 +55,26 @@ test('published Agent configuration is isolated by workspace and environment and
   };
 
   const modelCalls = [];
+  const toolCalls = [];
   t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (url === 'https://docs.mcp.cloudflare.com/mcp') {
+      const body = JSON.parse(options.body);
+      assert.equal(options.headers.Authorization, undefined);
+      if (body.method === 'initialize') return Response.json({id:body.id, result:{
+        protocolVersion:'2025-06-18', capabilities:{tools:{}}
+      }});
+      if (body.method === 'notifications/initialized') return new Response(null, {status:202});
+      const name = 'search_cloudflare_documentation';
+      if (body.method === 'tools/list') return Response.json({id:body.id, result:{
+        tools:[{name, annotations:{readOnlyHint:true}}]
+      }});
+      assert.equal(body.method,'tools/call');
+      assert.equal(body.params.name,name);
+      toolCalls.push(body.params.arguments.query);
+      return Response.json({id:body.id,result:{structuredContent:{results:[
+        {title:'Test documentation', url:'https://developers.cloudflare.com/workers/',text:'A fixture.'}
+      ]}}});
+    }
     assert.equal(url, 'https://api.deepseek.com/chat/completions');
     assert.equal(options.headers.Authorization, 'Bearer fixture-provider-key');
     const body = JSON.parse(options.body);
@@ -122,4 +141,20 @@ test('published Agent configuration is isolated by workspace and environment and
   assert.equal(rolledBack.data.output,'Version one');
   const balance = (await request('/api/billing')).data;
   assert.equal(balance.entries.find(row => row.reference === rolledBack.data.id).nanos, -rolledBack.data.cost_nanos);
+  const connection = await create('mcp-connect', {provider:'cloudflare-docs'});
+  const runDraft = () => action('runs', {target_kind:'agent',target:agent.id,input:'What are Workers?'}, {token:key.token});
+  assert.equal((await runDraft()).status,201);
+  assert.equal(toolCalls.length,0);
+  assert.equal((await action('agent-update', {...profile,agent:agent.id,instructions:'MCP test',
+    mcp_connection:'wrong'})).status,400);
+  await create('agent-update', {...profile,agent:agent.id,instructions:'MCP test',mcp_connection:connection.id});
+  const withTool = await runDraft();
+  assert.equal(withTool.status,201,JSON.stringify(withTool.data));
+  assert.deepEqual(toolCalls,['What are Workers?']);
+  assert.equal(withTool.data.steps[0].connection_id, connection.id);
+  assert.equal(withTool.data.steps[0].output[0].title,'Test documentation');
+  assert.match(modelCalls.at(-1).messages[1].content,/Test documentation/);
+  await create('mcp-disconnect',{connection:connection.id});
+  assert.equal((await runDraft()).status,400);
+  assert.equal(toolCalls.length,1);
 });

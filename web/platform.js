@@ -1,6 +1,7 @@
 const platformContent = byId('platform-content');
 const modules = {
   billing: ['Billing', 'Manage your balance, review usage, and access API keys.'],
+  connections: ['Connections', 'Connect tools that your Agents can use.'],
   models: ['Models', 'Manage the model connections your agents run on.'],
   datasets: ['Datasets', 'Curate examples and reference outputs for evaluation.'],
   experiments: ['Experiments', 'Evaluate prompt versions against a dataset and compare scores.'],
@@ -209,6 +210,33 @@ function renderModule(module, selectedTarget) {
   const options = kind => ofKind(kind).map(item => [item.id, item.name]);
   const promptField = () => field('prompt', 'Prompt version', promptOptions());
   const inputField = () => field('input', 'Input JSON', 'textarea');
+
+  if (module === 'connections') {
+    const connection = ofKind('mcp_connection').find(item => !item.revoked);
+    const label = connection ? 'Connected' : 'Available';
+    const card = listPanel('Cloudflare Documentation', [
+      element('span', 'Read-only MCP', 'pill'),
+      element('p', 'Search public Cloudflare developer documentation. Assign this tool to a Hosted DeepSeek Agent in its configuration.'),
+      element('span', label, connection ? 'pill success' : 'pill')
+    ]);
+    card.classList.add('connection-card', 'wide');
+    const action = iconButton(connection ? 'close' : 'plus', connection ? 'Disconnect' : 'Connect MCP');
+    const status = element('p');
+    status.setAttribute('role', 'status');
+    action.addEventListener('click', async () => {
+      action.disabled = true;
+      try {
+        if (connection) await platformRequest('/mcp-disconnect', {connection:connection.id});
+        else await platformRequest('/mcp-connect', {provider:'cloudflare-docs'});
+        await loadModule('connections');
+      } catch (error) {
+        status.textContent = error.message;
+        action.disabled = false;
+      }
+    });
+    card.append(action, status);
+    panels.push(card);
+  }
 
   if (module === 'models') {
     const connect = iconButton('plus', 'Add connection', 'button primary');
@@ -591,6 +619,23 @@ function agentFields(data, models) {
   advanced.append(element('summary', 'Run settings'), limit);
   advanced.open = data.max_tokens != null && data.max_tokens !== '';
   root.append(identity, model, instructions, starter, advanced);
+  const connections = ofKind('mcp_connection').filter(item => !item.revoked || item.id === data.mcp_connection);
+  if (connections.length) {
+    const tool = field('mcp_connection', 'Read-only tool', connections.map(item =>
+      [item.id, item.name + (item.revoked ? ' (disconnected)' : '')]));
+    const toolInput = tool.querySelector('select');
+    toolInput.options[0].textContent = 'No tools';
+    toolInput.required = false;
+    toolInput.value = data.mcp_connection ?? '';
+    const note = element('small', 'When assigned, each run searches public Cloudflare docs using the message you send.');
+    const showTool = () => {
+      tool.hidden = note.hidden = modelInput.value !== hostedProvider;
+      if (tool.hidden) toolInput.value = '';
+    };
+    modelInput.addEventListener('change', showTool);
+    showTool();
+    root.append(tool, note);
+  }
   return root;
 }
 
@@ -862,7 +907,8 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
     billingField.hidden = !hosted;
     billingInput.disabled = !hosted;
     manageKeys.hidden = !hosted;
-    hint.textContent = hosted ? 'Charges use your account balance.' : 'Each run is independent.';
+    hint.textContent = target.mcp_connection ? 'Your message is sent to Cloudflare Documentation for a read-only search.' :
+      hosted ? 'Charges use your account balance.' : 'Each run is independent.';
     send.disabled = hosted && !availableKeys.length;
     configure.hidden = target.kind === 'deployment';
     if (reset) {
@@ -1186,7 +1232,7 @@ async function loadModule(module, selectedTarget) {
   const request = ++moduleRequest;
   const currentRequest = () => request === moduleRequest && activeModule === module && !platformContent.hidden;
   activeModule = module;
-  if (['agent', 'agents', 'studio'].includes(module)) showWorkspaceArea('home');
+  if (['agent', 'agents', 'studio', 'connections'].includes(module)) showWorkspaceArea('home');
   else if (!['models', 'billing'].includes(module)) showWorkspaceArea('console');
   closeWorkspaceMenu();
   byId('tracing-content').hidden = true;
