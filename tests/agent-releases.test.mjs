@@ -212,6 +212,17 @@ test('published Agent configuration is isolated by workspace and environment and
   assert.equal(githubRun.data.steps[0].input.repository,'choasup/agentops');
   assert.match(githubRun.data.steps[0].output.content,/# Agent Deck/);
   assert.match(modelCalls.at(-1).messages[1].content,/An Agent workspace/);
+  const listed = (await request('/api/platform')).data.filter(item => item.builtin);
+  assert.equal(listed.length, 6);
+  assert.deepEqual((await request('/api/platform', {session:'other-session'})).data.filter(item => item.builtin), listed);
+  const builtin = listed.find(item => item.id === 'builtin:doc-coauthoring:v1');
+  const builtinAgent = await create('agents', {...profile,instructions:'Write a document',skill:builtin.id});
+  const builtinRun = await action('runs', {target_kind:'agent',target:builtinAgent.id,input:'Draft a proposal'}, {token:key.token});
+  assert.equal(builtinRun.status,201);
+  assert.equal(builtinRun.data.steps[0].skill_id,builtin.id);
+  assert.ok(modelCalls.at(-1).messages[0].content.includes(builtin.instructions));
+  const builtinVersion = await create('agent-versions', {agent:builtinAgent.id,label:'With built-in Skill'});
+  assert.equal(builtinVersion.skill,builtin.id);
   const imported = await create('skills', {name:'Summarizer', instructions:'Summarize in bullets.', requires:null});
   const importAgent = await create('agents', {...profile,instructions:'Summarize',skill:imported.id});
   const importRun = await action('runs', {target_kind:'agent',target:importAgent.id,input:'Summarize this text'}, {token:key.token});

@@ -350,6 +350,27 @@ function openSkillImport() {
   openModal('Import Skill', [form]);
 }
 
+function skillLibraryEntry(skill) {
+  const detail = element('details', undefined, 'skill-library-item');
+  const summary = element('summary');
+  summary.append(element('strong', skill.name));
+  if (skill.source) summary.append(element('span', skill.source, 'pill'));
+  if (skill.description) summary.append(element('small', skill.description));
+  detail.append(summary);
+  if (skill.requires) {
+    detail.append(element('p', 'Required connection: ' + (connectionCatalogue.find(item => item.id === skill.requires)?.name ?? skill.requires)));
+  }
+  if (skill.source_url) {
+    const link = element('a', 'View original on GitHub');
+    link.href = skill.source_url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    detail.append(link);
+  }
+  detail.append(element('pre', skill.instructions, 'skill-preview'));
+  return detail;
+}
+
 function renderModule(module, selectedTarget) {
   refreshWorkspaceView = undefined;
   const [title, description] = modules[module];
@@ -368,13 +389,16 @@ function renderModule(module, selectedTarget) {
     upload.addEventListener('click', openSkillImport);
     heading.append(upload);
     const skills = ofKind('skill');
-    const library = listPanel('Installed Skills', skills.length ? skills.map(skill => {
-      const detail = element('details', undefined, 'skill-library-item');
-      detail.append(element('summary', skill.name),
-        element('p', skill.requires ? 'Required connection: ' + connectionCatalogue.find(item => item.id === skill.requires)?.name : 'Assign in Studio → Configure.'),
-        element('pre', skill.instructions, 'skill-preview'));
-      return detail;
-    }) : [element('p', 'Import a ZIP containing SKILL.md to add your first Skill.')]);
+    const workspaceSkills = skills.filter(skill => !skill.builtin);
+    const features = skills.filter(skill => skill.builtin);
+    if (features.length) {
+      const builtin = listPanel('Built-in Skills', [element('p', 'Ready to add in Studio → Configure. Adapted for text-based runs.'),
+        ...features.map(skillLibraryEntry)]);
+      builtin.classList.add('wide');
+      panels.push(builtin);
+    }
+    const library = listPanel('Workspace Skills', workspaceSkills.length ? workspaceSkills.map(skillLibraryEntry) :
+      [element('p', 'Import a ZIP containing SKILL.md to add a workspace Skill.')]);
     library.classList.add('wide');
     panels.push(library);
   }
@@ -835,6 +859,7 @@ function studioAttachments(data, modelInput) {
     };
     const detail = item => {
       if (tool) return item.revoked ? 'Disconnected' : item.scope ?? 'Read-only';
+      if (item.builtin) return item.source + ' · Built-in';
       if (!item.requires) return '';
       const provider = connectionCatalogue.find(entry => entry.id === item.requires);
       return 'Requires ' + (provider?.name ?? item.requires);
@@ -869,6 +894,7 @@ function studioAttachments(data, modelInput) {
         row.disabled = !tool && !compatible(item);
         row.append(element('strong', item.name));
         if (detail(item)) row.append(element('small', detail(item)));
+        if (item.description) row.append(element('small', item.description));
         row.addEventListener('click', () => select(item.id));
         list.append(row);
       }
@@ -1160,7 +1186,7 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
     hint.textContent = connection?.revoked ? 'This Agent’s tool is disconnected. Change it in Configuration.' :
       connection?.scope ? (skill ? skill.name + ' · ' : '') + 'Reads ' + connection.scope + ' before answering.' :
       connection ? 'Your message is sent to Cloudflare Documentation for a read-only search.' :
-      '';
+      skill ? 'Uses ' + skill.name + ' for this test.' : '';
     configure.hidden = target.kind === 'deployment';
     if (reset) {
       selectedRun = undefined;

@@ -633,6 +633,10 @@ dialog::backdrop {background: #111a3a70}
 .connection-shortcuts .connection-identity img {height:18px; max-width:65px}
 .skill-library-item {padding:8px 0}
 .skill-library-item + .skill-library-item {border-top:1px solid var(--border)}
+.skill-library-item summary {cursor:pointer}
+.skill-library-item summary .pill {margin-inline-start:8px}
+.skill-library-item summary small {display:block; padding-inline-start:14px; color:var(--muted); font-size:12px}
+.skill-library-item > a {display:inline-block; margin:8px 0; color:var(--accent-dark)}
 .skill-library-item > p {margin-top:8px; color:var(--muted)}
 .skill-preview {max-height:42dvh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere}
 .connection-card [role="status"]:empty {display:none}

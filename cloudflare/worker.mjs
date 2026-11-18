@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { builtinSkills, builtinSkillById } from './builtin-skills.mjs';
 import { Billing, BillingError, checkout, hostedModel, hostedProviderId, paymentWebhook } from './billing.mjs';
 import { docsConnection, searchDocs, verifyDocsConnection } from './mcp.mjs';
 import { githubConnection, readReadme, verifyReadmeConnection } from './github.mjs';
@@ -266,7 +267,7 @@ export class Workspace extends DurableObject {
 
   resolveSkill(records, agent) {
     if (!agent.skill) return undefined;
-    const skill = records.find(item => item.kind === 'skill' && item.id === agent.skill);
+    const skill = builtinSkillById.get(agent.skill) ?? records.find(item => item.kind === 'skill' && item.id === agent.skill);
     if (!skill || agent.provider !== hostedProviderId) throw new InputError('Choose an installed Skill for Hosted DeepSeek');
     if (skill.requires) {
       const connection = records.find(item => item.kind === 'mcp_connection' &&
@@ -732,7 +733,7 @@ export class Workspace extends DurableObject {
         ({id, identifier, name, source}) => ({id, identifier, name, source})
       ));
       if (pathname === '/api/traces') return json(this.rows('traces'));
-      if (pathname === '/api/platform') return json(this.rows('records').map(publicRecord), 200, {
+      if (pathname === '/api/platform') return json([...this.rows('records').map(publicRecord), ...builtinSkills], 200, {
         'X-Agent-Deck-Hosted-Model': this.env.DEEPSEEK_API_KEY ? 'available' : 'unavailable'
       });
     }
