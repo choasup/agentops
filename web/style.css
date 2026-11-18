@@ -550,3 +550,11 @@ dialog::backdrop {background: #111a3a70}
 
 .release-entry {display:grid; gap:6px; margin-top:10px; padding-top:10px; border-top:1px solid var(--border)}
 .release-entry .button {margin-top:8px}
+
+.registry-latest {display:grid; justify-items:start; gap:4px}
+.registry-run-link {font-weight:550}
+.registry-run-link:hover {color:var(--accent-dark); text-decoration:underline}
+.registry-mobile-model {display:none}
+@media (max-width:680px) {
+  .registry-mobile-model {display:block}
+}

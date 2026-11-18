@@ -18,7 +18,7 @@ let billing;
 const billingMoney = nanos => new Intl.NumberFormat('en-US', {
   style:'currency', currency:'USD', maximumFractionDigits:9
 }).format(nanos / 1e9);
-const registryFilters = {query:'', source:'', sort:'recent'};
+const registryFilters = {query:'', source:'', activity:'', sort:'recent'};
 let lastStudioTarget;
 let refreshWorkspaceView;
 document.addEventListener('tracesupdated', () => refreshWorkspaceView?.());
@@ -357,14 +357,7 @@ function renderModule(module, selectedTarget) {
       expandable(record.name, {prompt: promptOptions().find(([id]) => id === record.prompt)?.[1], id:record.id}))));
   }
 
-  if (module === 'agents') {
-    const actions = element('div', undefined, 'section-actions');
-    const models = iconButton('models', 'Manage models', 'button');
-    models.addEventListener('click', () => loadModule('models'));
-    actions.append(models);
-    heading.append(actions);
-    panels.push(agentRegistry());
-  }
+  if (module === 'agents') panels.push(agentRegistry());
 
   if (module === 'studio') {
     const targets = records.filter(record =>
@@ -964,12 +957,25 @@ function agentRegistry() {
   source.setAttribute('aria-label', 'Agent type');
   source.append(new Option('All types', ''), new Option('Studio', 'studio'), new Option('External', 'external'));
   source.value = registryFilters.source;
+  const activityFilter = element('select');
+  activityFilter.setAttribute('aria-label', 'Agent activity');
+  activityFilter.append(new Option('All activity', ''), new Option('Awaiting first trace', 'waiting'),
+    new Option('Latest run failed', 'failed'), new Option('Has runs', 'runs'));
+  activityFilter.value = registryFilters.activity;
+  activityFilter.disabled = !tracesReady;
   const sort = element('select');
   sort.setAttribute('aria-label', 'Sort agents');
   sort.append(new Option('Most recent run', 'recent'), new Option('Agent name', 'name'));
   sort.value = registryFilters.sort;
   const count = element('p', undefined, 'registry-count');
-  head.append(search, source, sort, count);
+  const refreshButton = iconButton('traces', 'Refresh activity', 'button quiet');
+  refreshButton.addEventListener('click', async () => {
+    refreshButton.disabled = true;
+    const loaded = await refresh();
+    refreshButton.disabled = false;
+    if (!loaded) count.textContent = 'Could not refresh activity';
+  });
+  head.append(search, source, activityFilter, sort, count, refreshButton);
   const grid = element('div', undefined, 'table-wrap registry-table');
   const table = element('table');
   table.setAttribute('aria-label', 'Agent registry');
@@ -994,7 +1000,10 @@ function agentRegistry() {
       const time = Date.parse(trace.at);
       if (!Number.isFinite(time)) continue;
       const old = map.get(trace.agent_id) ?? {last:0, total:0, errors:0};
-      old.last = Math.max(old.last, time);
+      if (!old.latest || time > old.last) {
+        old.last = time;
+        old.latest = trace;
+      }
       if (time >= oneWeekAgo) {
         old.total++;
         if (trace.status === 'error') old.errors++;
@@ -1007,15 +1016,23 @@ function agentRegistry() {
   function draw() {
     const activity = stats();
     const query = registryFilters.query.trim().toLowerCase();
-    const filtered = agents.filter(agent =>
-      (!registryFilters.source || (agent.source ?? 'studio') === registryFilters.source) &&
-      [agent.name, agent.identifier, agent.provider && recordName(agent.provider)]
-        .some(value => value?.toLowerCase().includes(query))
-    );
+    activityFilter.disabled = !tracesReady;
+    const filtered = agents.filter(agent => {
+      const latest = activity.get(agent.identifier)?.latest;
+      const matchesActivity = !tracesReady || {
+        '':true, waiting:agent.source === 'external' && !latest,
+        failed:latest?.status === 'error', runs:Boolean(latest)
+      }[registryFilters.activity];
+      return matchesActivity && (!registryFilters.source || (agent.source ?? 'studio') === registryFilters.source) &&
+        [agent.name, agent.identifier, agent.description, agent.provider && recordName(agent.provider)]
+          .some(value => value?.toLowerCase().includes(query));
+    });
     const byName = (first, second) => first.name.localeCompare(second.name);
     filtered.sort(registryFilters.sort === 'name' ? byName : (first, second) =>
       (activity.get(second.identifier)?.last ?? 0) - (activity.get(first.identifier)?.last ?? 0) || byName(first, second));
-    count.textContent = number.format(filtered.length) + (filtered.length === 1 ? ' agent' : ' agents');
+    count.textContent = (filtered.length === agents.length ? number.format(agents.length) :
+      number.format(filtered.length) + ' of ' + number.format(agents.length)) +
+      (agents.length === 1 && filtered.length === 1 ? ' agent' : ' agents');
 
     rows.replaceChildren(...filtered.map(agent => {
       const row = element('tr');
@@ -1027,19 +1044,20 @@ function agentRegistry() {
       const details = element('button', agent.name, 'agent-name');
       details.addEventListener('click', () => agentSettings(agent));
       labels.append(details, element('p', agent.description || (external ? 'External agent' : 'Studio agent')));
-      const observed = activity.has(agent.identifier);
+      const usage = activity.get(agent.identifier);
+      const observed = Boolean(usage);
       if (external && tracesReady) labels.append(element('span', observed ? 'Trace received' : 'Awaiting first trace',
         observed ? 'pill success' : 'pill'));
       identity.append(avatar, labels);
       const actions = element('div', undefined, 'agent-actions');
-      if (agent.identifier) {
+      if (observed) {
         const openTraces = iconButton('traces', 'Traces', 'button quiet');
         openTraces.setAttribute('aria-label', 'View traces for ' + agent.name);
         openTraces.addEventListener('click', () => openAgentTraces(agent));
         actions.append(openTraces);
       }
       if (external) {
-        const setup = iconButton('external', observed ? 'Integration' : 'Set up', 'button');
+        const setup = iconButton('external', observed ? 'Integration' : 'Set up integration', 'button');
         setup.setAttribute('aria-label', 'Integration setup for ' + agent.name);
         setup.addEventListener('click', () => externalIntegration(agent));
         actions.append(setup);
@@ -1049,10 +1067,19 @@ function agentRegistry() {
         studio.addEventListener('click', () => loadModule('studio', agent.id));
         actions.append(studio);
       }
-      const usage = activity.get(agent.identifier);
+      const modelName = external ? 'Runs externally' : agent.provider ? recordName(agent.provider) : 'Workspace default';
+      const latest = usage?.latest;
+      const runSummary = element('div', undefined, 'registry-latest');
+      if (latest) {
+        const inspect = element('button', timeLabel(usage.last), 'agent-name registry-run-link');
+        inspect.type = 'button';
+        inspect.setAttribute('aria-label', 'Open latest trace for ' + agent.name);
+        inspect.addEventListener('click', () => showTrace(latest));
+        runSummary.append(inspect, statusPill(runStatus(latest)));
+      } else runSummary.textContent = tracesReady ? 'No runs yet' : '—';
+      labels.append(element('p', modelName, 'registry-mobile-model'));
       const values = [
-        identity, external ? '—' : agent.provider ? recordName(agent.provider) : 'Workspace default',
-        tracesReady ? timeLabel(usage?.last) : '—', tracesReady ? number.format(usage?.total ?? 0) : '—',
+        identity, modelName, runSummary, tracesReady ? number.format(usage?.total ?? 0) : '—',
         usage?.total ? (100 * usage.errors / usage.total).toFixed(1) + '%' : '—', actions
       ];
       values.forEach((value, index) => {
@@ -1064,8 +1091,19 @@ function agentRegistry() {
       return row;
     }));
     if (!filtered.length) {
-      const empty = element('td', 'No matching agents.', 'empty');
+      const empty = element('td', undefined, 'empty');
       empty.colSpan = 6;
+      const reset = element('button', 'Clear filters', 'button quiet');
+      reset.addEventListener('click', () => {
+        registryFilters.query = search.value = '';
+        registryFilters.source = source.value = '';
+        registryFilters.activity = activityFilter.value = '';
+        syncSelect(source);
+        syncSelect(activityFilter);
+        draw();
+        search.focus();
+      });
+      empty.append(element('p', 'No agents match these filters.'), reset);
       const row = element('tr');
       row.append(empty);
       rows.append(row);
@@ -1073,6 +1111,7 @@ function agentRegistry() {
   }
   search.addEventListener('input', () => {registryFilters.query = search.value; draw();});
   source.addEventListener('change', () => {registryFilters.source = source.value; draw();});
+  activityFilter.addEventListener('change', () => {registryFilters.activity = activityFilter.value; draw();});
   sort.addEventListener('change', () => {registryFilters.sort = sort.value; draw();});
   refreshWorkspaceView = () => {if (panel.isConnected && !rows.contains(document.activeElement)) draw();};
   draw();
