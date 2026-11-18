@@ -9,13 +9,12 @@ const modules = {
   feedback: ['Review Queue', 'Score ingested traces and record reviewer feedback.'],
   prompts: ['Prompts', 'Save and reuse prompt template versions.'],
   playground: ['Playground', 'Test prompt versions with your inputs.'],
-  deployments: ['Deployments', 'Publish saved Agent versions by environment.'],
+  deployments: ['Deployments', 'Inspect the active versions in each environment.'],
   agent: ['Agent', ''],
-  'console-agents': ['Agents', 'Manage Agent versions, evaluations, and releases.'],
+  'console-agents': ['Agents', 'Evaluate and monitor your Agents.'],
   agents: ['All agents', 'Find your agents, check recent activity, and manage integrations.'],
   studio: ['Studio', 'Try a test message with a Studio agent or deployment.']
 };
-const lifecycleTabs = [['versions', 'Versions'], ['evaluations', 'Evaluations'], ['releases', 'Releases']];
 let activeModule;
 let moduleRequest = 0;
 let records = [];
@@ -569,11 +568,11 @@ function renderModule(module, selectedTarget) {
       if (agent.description) identity.append(element('p', agent.description));
       const open = iconButton('arrow', 'Open', 'button');
       open.setAttribute('aria-label', 'Open ' + agent.name + ' in Console');
-      open.addEventListener('click', () => openAgentDetail(agent.id, 'versions'));
+      open.addEventListener('click', () => openAgentDetail(agent.id, 'evaluations'));
       item.append(identity, open);
       return item;
     });
-    const list = listPanel('Studio agents', items.length ? items : [element('p', 'Create an Agent in Home to manage its lifecycle here.')]);
+    const list = listPanel('Studio agents', items.length ? items : [element('p', 'Create an Agent in Home to evaluate it here.')]);
     list.classList.add('wide');
     panels.push(list);
   }
@@ -587,8 +586,10 @@ function renderModule(module, selectedTarget) {
       panels.push(listPanel('Agent unavailable', [back]));
     } else {
       const external = agent.source === 'external';
-      const tabs = inConsole ? lifecycleTabs : external ? [['integration', 'Integration'], ['activity', 'Activity']] : [];
-      const section = tabs.some(([id]) => id === selectedTarget.section) ? selectedTarget.section : tabs[0]?.[0] ?? 'studio';
+      const tabs = inConsole ? [] : external ? [['integration', 'Integration'], ['activity', 'Activity']] :
+        accountStatus?.user ? [['studio', 'Studio'], ['publish', 'Publish']] : [];
+      const section = inConsole ? 'evaluations' : tabs.some(([id]) => id === selectedTarget.section)
+        ? selectedTarget.section : tabs[0]?.[0] ?? 'studio';
       const showIdentity = updated => {
         headingText.replaceChildren(element('h1', updated.name));
         byId('crumb').textContent = updated.name;
@@ -600,16 +601,21 @@ function renderModule(module, selectedTarget) {
       back.addEventListener('click', () => loadModule(inConsole ? 'console-agents' : 'agents'));
       actions.append(back);
       if (!external && accountStatus?.user) {
-        const jump = iconButton(inConsole ? 'studio' : 'external', inConsole ? 'Open Studio' : 'Open in Console', 'button');
-        jump.addEventListener('click', () => openAgentDetail(agent.id, inConsole ? 'studio' : 'versions'));
+        const jump = iconButton(inConsole ? 'studio' : 'external', inConsole ? 'Open Studio' : 'Evaluations', 'button');
+        jump.addEventListener('click', () => openAgentDetail(agent.id, inConsole ? 'studio' : 'evaluations'));
         const use = iconButton('terminal', 'Use Agent', 'button');
         use.addEventListener('click', () => openAgentUsage(ofKind('agent').find(item => item.id === agent.id) ?? agent));
-        actions.append(jump, use);
+        actions.append(jump);
+        if (inConsole) {
+          const publish = iconButton('deploy', 'Open Publish', 'button');
+          publish.addEventListener('click', () => openAgentDetail(agent.id, 'publish'));
+          actions.append(publish);
+        } else actions.append(use);
       }
       heading.append(actions);
       if (tabs.length) {
         const nav = element('nav', undefined, 'agent-detail-nav wide');
-        nav.setAttribute('aria-label', inConsole ? 'Agent lifecycle' : 'Agent sections');
+        nav.setAttribute('aria-label', 'Agent sections');
         for (const [id, label] of tabs) {
           const button = element('button', label, 'trace-tab');
           if (id === section) button.setAttribute('aria-current', 'page');
@@ -619,8 +625,7 @@ function renderModule(module, selectedTarget) {
         panels.push(nav);
       }
       if (section === 'studio') panels.push(studioWorkspace([agent], agent.id, showIdentity));
-      if (section === 'versions') panels.push(...agentReleasePanels(agent.id, 'versions'));
-      if (section === 'releases') panels.push(...agentReleasePanels(agent.id, 'releases'));
+      if (section === 'publish') panels.push(...agentReleasePanels(agent.id));
       if (section === 'evaluations') panels.push(...agentEvaluationPanels(agent.id));
       if (section === 'integration') {
         const panel = listPanel('Connect your application', [externalIntegration(agent, true)]);
@@ -649,7 +654,7 @@ function renderModule(module, selectedTarget) {
 }
 
 function openAgentDetail(id, section) {
-  const module = lifecycleTabs.some(([tab]) => tab === section) ? 'console-agents' : 'agent';
+  const module = section === 'evaluations' ? 'console-agents' : 'agent';
   return loadModule(module, {id, section});
 }
 
@@ -671,7 +676,7 @@ function agentEvaluationPanels(agentId) {
     return section;
   }));
   if (versions.length < 2 || !datasets.length) return [listPanel('Compare Agent versions', [
-    element('p', agentId ? 'Save two versions in Versions and add a dataset with expected text replies.' :
+    element('p', agentId ? 'Save two versions in Home → Publish and add a dataset with expected text replies.' :
       'Save two versions of the same Agent and add a dataset with expected text replies.')
   ]), report];
   const baseline = field('baseline', 'Baseline version', choices);
@@ -798,7 +803,7 @@ function openAgentUsage(agent) {
   });
   release.addEventListener('click', () => {
     byId('modal').close();
-    openAgentDetail(agent.id, ofKind('agent_version').some(item => item.agent === agent.id) ? 'releases' : 'versions');
+    openAgentDetail(agent.id, 'publish');
   });
   const body = element('div', undefined, 'agent-api');
   body.append(element('p', agent.name), endpoint,
@@ -809,11 +814,11 @@ function openAgentUsage(agent) {
   openModal('Use Agent', [body]);
 }
 
-function agentReleasePanels(agentId, section) {
+function agentReleasePanels(agentId) {
   const agents = ofKind('agent').filter(agent => agent.source !== 'external' && (!agentId || agent.id === agentId));
   const versions = ofKind('agent_version').filter(version => !agentId || version.agent === agentId);
   const releases = ofKind('agent_release').filter(release => !agentId || release.agent === agentId);
-  const reload = () => agentId ? openAgentDetail(agentId, section) : loadModule('deployments');
+  const reload = () => openAgentDetail(agentId, 'publish');
   const agentField = field('agent', 'Agent', agents.map(agent => [agent.id, agent.name]));
   if (agentId) {
     agentField.querySelector('select').value = agentId;
@@ -850,8 +855,13 @@ function agentReleasePanels(agentId, section) {
     const request = {target_kind:'agent_release', target:release.agent, environment:release.environment, input:'Your message'};
     item.append(expandable('Run via API', {endpoint:'POST /api/platform/runs', required_scope:'agents:run',
       ...(version?.provider === hostedProvider ? {hosted_model_scope:'models:invoke'} : {}), body:request}));
+    if (!agentId) {
+      const open = iconButton('deploy', 'Open Publish', 'button quiet');
+      open.addEventListener('click', () => openAgentDetail(release.agent, 'publish'));
+      item.append(open);
+    }
     const previous = byVersion.get(release.previous);
-    if (previous) {
+    if (agentId && previous) {
       const disclosure = element('details');
       disclosure.append(element('summary', 'Roll back to ' + previous.label));
       const rollback = element('button', 'Confirm rollback', 'button');
@@ -876,9 +886,8 @@ function agentReleasePanels(agentId, section) {
   const history = listPanel('Saved Agent versions', versions.map(version => expandable(
     recordName(version.agent) + ' · ' + version.label, {id:version.id, model:version.model,
       max_tokens:version.max_tokens, instructions:version.instructions})));
-  if (section === 'versions') return [save, history];
-  if (section === 'releases') return [publish, deployments, channelPublishingPanel(agentId, active)];
-  return [save, publish, deployments, history];
+  if (!agentId) return [deployments];
+  return [save, publish, deployments, history, channelPublishingPanel(agentId, active)];
 }
 
 function openHostedWeCom(agentId, environments) {

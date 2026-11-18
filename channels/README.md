@@ -1,6 +1,6 @@
 # Agent Deck 微信渠道网关
 
-在 **Console → Agents → Releases** 发布到 Staging 或 Production，再进入 **WeChat channels** 选渠道和环境。网关部署在自己的 Node.js 22.15+ 服务上，转发文本消息到已发布的 Agent。每轮调用生成 Trace。两个渠道目前按单条文本处理。
+在 **Home → All agents → 选择 Agent → Publish** 发布到 Staging 或 Production，再进入 **WeChat channels** 选渠道和环境。网关部署在自己的 Node.js 22.15+ 服务上，转发文本消息到已发布的 Agent。每轮调用生成 Trace。两个渠道目前按单条文本处理。
 
 进入仓库的 `channels` 目录，执行 `npm install`。在服务的环境变量里配置：
 
@@ -12,7 +12,7 @@
 
 ## 企业微信智能机器人
 
-推荐在 **Console → Agents → Releases → WeChat channels → 企业微信智能机器人** 选择环境，填写 Bot ID 和 Secret。由 Agent Deck 的 Cloudflare Durable Object 托管长连接，每个工作区可连接一个机器人。托管模型从工作区余额扣费，设置弹窗可查看连接状态和最近一条 Trace。下面是自托管的备选方式。
+推荐在 **Home → All agents → 选择 Agent → Publish → WeChat channels → 企业微信智能机器人** 选择环境，填写 Bot ID 和 Secret。由 Agent Deck 的 Cloudflare Durable Object 托管长连接，每个工作区可连接一个机器人。托管模型从工作区余额扣费，设置弹窗可查看连接状态和最近一条 Trace。下面是自托管的备选方式。
 
 
 在企业微信创建智能机器人，选择 API 模式中的长连接。把 Bot ID 和 Secret 配置为 `WECOM_BOT_ID`、`WECOM_BOT_SECRET`，启动 `node gateway.mjs wecom`。看到认证成功后，给机器人发一条测试消息。该进程需要常驻运行，主动连企业微信，无需回调域名。 [腾讯官方接入说明](https://intl.cloud.tencent.com/zh/document/product/1316/84454)
