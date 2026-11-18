@@ -602,7 +602,9 @@ function renderModule(module, selectedTarget) {
       if (!external && accountStatus?.user) {
         const jump = iconButton(inConsole ? 'studio' : 'external', inConsole ? 'Open Studio' : 'Open in Console', 'button');
         jump.addEventListener('click', () => openAgentDetail(agent.id, inConsole ? 'studio' : 'versions'));
-        actions.append(jump);
+        const use = iconButton('terminal', 'Use Agent', 'button');
+        use.addEventListener('click', () => openAgentUsage(ofKind('agent').find(item => item.id === agent.id) ?? agent));
+        actions.append(jump, use);
       }
       heading.append(actions);
       if (tabs.length) {
@@ -699,6 +701,75 @@ function agentEvaluationPanels(agentId) {
     setup.append(link);
   }
   return [setup, report];
+}
+
+function openAgentUsage(agent) {
+  const options = [['draft', 'Draft · development']];
+  const releases = new Map();
+  for (const [id, label] of [['production', 'Production'], ['staging', 'Staging']]) {
+    const release = ofKind('agent_release').find(item => item.agent === agent.id && item.environment === id);
+    const version = release && ofKind('agent_version').find(item => item.id === release.version);
+    if (version) {
+      releases.set(id, version);
+      options.unshift([id, label + ' · ' + version.label]);
+    }
+  }
+  const target = field('api-target', 'Target', options);
+  const select = target.querySelector('select');
+  select.value = releases.has('production') ? 'production' : releases.has('staging') ? 'staging' : 'draft';
+  const detail = element('p');
+  const permission = element('p');
+  const code = element('pre', undefined, 'agent-api-command');
+  const copy = iconButton('copy', 'Copy cURL', 'button');
+  const keys = iconButton('key', 'Manage API keys', 'button quiet');
+  const release = iconButton('deploy', 'Manage releases', 'button quiet');
+  const actions = element('div', undefined, 'section-actions');
+  actions.append(copy, keys, release);
+  function update() {
+    const environment = select.value;
+    const version = releases.get(environment);
+    detail.textContent = version ? 'Requests run the version currently published to this environment.' :
+      'Draft calls use your latest Studio configuration. Publish a version for stable integrations.';
+    permission.textContent = 'Use an Agent Deck API key with List and run agents' +
+      ((version ?? agent).provider === hostedProvider ? ' and Call hosted models.' : '.');
+    const request = {target_kind:version ? 'agent_release' : 'agent', target:agent.id,
+      ...(version ? {environment} : {}), input:'Hello!'};
+    const continuation = ' ' + String.fromCharCode(92);
+    code.textContent = [
+      'curl --fail-with-body ' + location.origin + '/api/platform/runs' + continuation,
+      '  -H "Authorization: Bearer $AGENT_DECK_API_KEY"' + continuation,
+      "  -H 'Content-Type: application/json'" + continuation,
+      "  --data '" + JSON.stringify(request) + "'"
+    ].join('\n');
+    copy.querySelector('span').textContent = 'Copy cURL';
+  }
+  select.addEventListener('change', update);
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(code.textContent);
+      copy.querySelector('span').textContent = 'Copied';
+    } catch {
+      const selection = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(code);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+  });
+  keys.addEventListener('click', async () => {
+    byId('modal').close();
+    await loadModule('billing');
+    byId('billing-api-keys')?.scrollIntoView();
+  });
+  release.addEventListener('click', () => {
+    byId('modal').close();
+    openAgentDetail(agent.id, ofKind('agent_version').some(item => item.agent === agent.id) ? 'releases' : 'versions');
+  });
+  const body = element('div', undefined, 'agent-api');
+  body.append(element('p', agent.name), target, detail, permission, code,
+    element('p', 'Set AGENT_DECK_API_KEY on your server. The response includes output and a trace ID in id.'), actions);
+  update();
+  openModal('Use Agent', [body]);
 }
 
 function agentReleasePanels(agentId, section) {
@@ -1119,6 +1190,9 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
   const configure = iconButton('settings', 'Configure', 'button');
   configure.setAttribute('aria-haspopup', 'dialog');
   toolbar.append(selector, model, configure);
+  const use = iconButton('terminal', 'Use Agent', 'button');
+  if (!onAgentUpdate && accountStatus?.user) toolbar.append(use);
+  use.addEventListener('click', () => openAgentUsage(current()));
   const newTest = iconButton('plus', 'New test', 'button quiet');
   newTest.hidden = true;
 
@@ -1187,7 +1261,7 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
       connection?.scope ? (skill ? skill.name + ' · ' : '') + 'Reads ' + connection.scope + ' before answering.' :
       connection ? 'Your message is sent to Cloudflare Documentation for a read-only search.' :
       skill ? 'Uses ' + skill.name + ' for this test.' : '';
-    configure.hidden = target.kind === 'deployment';
+    configure.hidden = use.hidden = target.kind === 'deployment';
     if (reset) {
       selectedRun = undefined;
       showLatest = false;

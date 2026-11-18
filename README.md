@@ -63,6 +63,8 @@ Cloudflare Workers AI 测试连接使用独立的私有 Worker。新账号部署
 
 ### 发布 Agent 版本（Cloudflare）
 
+在 Studio Agent 页面点 **Use Agent**，选择 Draft、已发布的 Staging 或 Production，即可复制调用示例并查看 API Key 所需权限。Draft 调用使用当前 Studio 配置。生产集成可以绑定到已发布的环境。
+
 在 **Deployments** 保存 Studio Agent 的当前配置，给版本命名，再选择 **Staging** 或 **Production** 发布。环境独立指向已保存版本，更新 Studio 草稿不会改动已发布配置。若模型 ID 或端点发生变化，已有版本会拒绝运行，直到恢复连接配置或保存并发布新版本。可单独轮换供应商密钥。
 
 发布到 **Production** 前，到 **Experiments → Compare Agent versions** 选择同一 Agent 的两个版本和包含 1–5 条文本示例的数据集。结果保留每条示例的实际与预期回复。系统在去掉首尾空白后做严格匹配，被发布版本须在最近一次比较中全部通过。托管模型评估使用所选 API Key 计费。
