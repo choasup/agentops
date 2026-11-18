@@ -116,6 +116,7 @@ function showTrace(trace, linked = false) {
       ];
       if (run.model) items.splice(1, 0, ['Model', run.model]);
       if (run.type === 'tool' && run.connection_id) items.push(['Connection ID', run.connection_id], ['Access', 'Read-only']);
+      if (run.type === 'tool' && run.connection_scope) items.push(['Resource scope', run.connection_scope]);
       if (run === trace && run.agent_version) items.push(['Version ID', run.agent_version]);
       if (run === trace && run.key_id && typeof run.cost_nanos === 'number') {
         items.push(['API Key ID', run.key_id], ['Charge', billingMoney(run.cost_nanos)]);

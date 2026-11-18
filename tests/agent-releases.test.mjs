@@ -56,7 +56,14 @@ test('published Agent configuration is isolated by workspace and environment and
 
   const modelCalls = [];
   const toolCalls = [];
+  const githubCalls = [];
   t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (url === 'https://raw.githubusercontent.com/choasup/agentops/main/README.md') {
+      assert.equal(options.headers, undefined);
+      assert.equal(options.body, undefined);
+      githubCalls.push(options.method);
+      return new Response(options.method === 'HEAD' ? null : '# Agent Deck\n\nAn Agent workspace.');
+    }
     if (url === 'https://docs.mcp.cloudflare.com/mcp') {
       const body = JSON.parse(options.body);
       assert.equal(options.headers.Authorization, undefined);
@@ -157,4 +164,18 @@ test('published Agent configuration is isolated by workspace and environment and
   await create('mcp-disconnect',{connection:connection.id});
   assert.equal((await runDraft()).status,400);
   assert.equal(toolCalls.length,1);
+  const git = await create('mcp-connect', {provider:'github-agentops'});
+  assert.notEqual(git.id,connection.id);
+  assert.deepEqual(githubCalls,['HEAD']);
+  await create('agent-update', {...profile,agent:agent.id,instructions:'Summarize the README',mcp_connection:git.id});
+  const githubRun = await runDraft();
+  assert.equal(githubRun.status,201,JSON.stringify(githubRun.data));
+  assert.deepEqual(githubCalls,['HEAD','GET']);
+  assert.equal(githubRun.data.steps[0].connection_scope,'choasup/agentops · main/README.md');
+  assert.equal(githubRun.data.steps[0].input.repository,'choasup/agentops');
+  assert.match(githubRun.data.steps[0].output.content,/# Agent Deck/);
+  assert.match(modelCalls.at(-1).messages[1].content,/An Agent workspace/);
+  await create('mcp-disconnect',{connection:git.id});
+  assert.equal((await runDraft()).status,400);
+  assert.deepEqual(githubCalls,['HEAD','GET']);
 });

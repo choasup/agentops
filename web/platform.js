@@ -212,30 +212,39 @@ function renderModule(module, selectedTarget) {
   const inputField = () => field('input', 'Input JSON', 'textarea');
 
   if (module === 'connections') {
-    const connection = ofKind('mcp_connection').find(item => !item.revoked);
-    const label = connection ? 'Connected' : 'Available';
-    const card = listPanel('Cloudflare Documentation', [
-      element('span', 'Read-only MCP', 'pill'),
-      element('p', 'Search public Cloudflare developer documentation. Assign this tool to a Hosted DeepSeek Agent in its configuration.'),
-      element('span', label, connection ? 'pill success' : 'pill')
-    ]);
-    card.classList.add('connection-card', 'wide');
-    const action = iconButton(connection ? 'close' : 'plus', connection ? 'Disconnect' : 'Connect MCP');
-    const status = element('p');
-    status.setAttribute('role', 'status');
-    action.addEventListener('click', async () => {
-      action.disabled = true;
-      try {
-        if (connection) await platformRequest('/mcp-disconnect', {connection:connection.id});
-        else await platformRequest('/mcp-connect', {provider:'cloudflare-docs'});
-        await loadModule('connections');
-      } catch (error) {
-        status.textContent = error.message;
-        action.disabled = false;
-      }
-    });
-    card.append(action, status);
-    panels.push(card);
+    const catalogue = [
+      {id:'cloudflare-docs', name:'Cloudflare Documentation', access:'Read-only MCP',
+        description:'Search public Cloudflare developer documentation.'},
+      {id:'github-agentops', name:'GitHub · agentops', access:'Read-only connector',
+        description:'Read only the public README from choasup/agentops on main. No GitHub account authorization is needed.'}
+    ];
+    for (const provider of catalogue) {
+      const connection = ofKind('mcp_connection').find(item => !item.revoked &&
+        (item.provider ?? 'cloudflare-docs') === provider.id);
+      const card = listPanel(provider.name, [
+        element('span', provider.access, 'pill'),
+        element('p', provider.description),
+        element('span', connection ? 'Connected' : 'Available', connection ? 'pill success' : 'pill')
+      ]);
+      card.classList.add('connection-card');
+      const action = iconButton(connection ? 'close' : 'plus', connection ? 'Disconnect' : 'Connect');
+      action.setAttribute('aria-label', (connection ? 'Disconnect ' : 'Connect ') + provider.name);
+      const status = element('p');
+      status.setAttribute('role', 'status');
+      action.addEventListener('click', async () => {
+        action.disabled = true;
+        try {
+          if (connection) await platformRequest('/mcp-disconnect', {connection:connection.id});
+          else await platformRequest('/mcp-connect', {provider:provider.id});
+          await loadModule('connections');
+        } catch (error) {
+          status.textContent = error.message;
+          action.disabled = false;
+        }
+      });
+      card.append(action, status);
+      panels.push(card);
+    }
   }
 
   if (module === 'models') {
@@ -627,12 +636,17 @@ function agentFields(data, models) {
     toolInput.options[0].textContent = 'No tools';
     toolInput.required = false;
     toolInput.value = data.mcp_connection ?? '';
-    const note = element('small', 'When assigned, each run searches public Cloudflare docs using the message you send.');
+    const note = element('small');
     const showTool = () => {
-      tool.hidden = note.hidden = modelInput.value !== hostedProvider;
+      tool.hidden = modelInput.value !== hostedProvider;
       if (tool.hidden) toolInput.value = '';
+      const connection = connections.find(item => item.id === toolInput.value);
+      note.hidden = !connection;
+      if (connection) note.textContent = connection.scope ? 'Each run reads ' + connection.scope + '.' :
+        'Each run searches public Cloudflare docs using the message you send.';
     };
     modelInput.addEventListener('change', showTool);
+    toolInput.addEventListener('change', showTool);
     showTool();
     root.append(tool, note);
   }
@@ -907,7 +921,10 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
     billingField.hidden = !hosted;
     billingInput.disabled = !hosted;
     manageKeys.hidden = !hosted;
-    hint.textContent = target.mcp_connection ? 'Your message is sent to Cloudflare Documentation for a read-only search.' :
+    const connection = ofKind('mcp_connection').find(item => item.id === target.mcp_connection);
+    hint.textContent = connection?.revoked ? 'This Agent’s tool is disconnected. Change it in Configuration.' :
+      connection?.scope ? 'Reads ' + connection.scope + ' before answering.' :
+      connection ? 'Your message is sent to Cloudflare Documentation for a read-only search.' :
       hosted ? 'Charges use your account balance.' : 'Each run is independent.';
     send.disabled = hosted && !availableKeys.length;
     configure.hidden = target.kind === 'deployment';
