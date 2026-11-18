@@ -727,7 +727,6 @@ function agentEvaluationPanels(agentId) {
       const report = expandable((version?.label ?? variant.version) + ' · ' + passed + '/' + variant.results.length,
         variant.results);
       for (const [index, result] of variant.results.entries()) {
-        if (result.passed) continue;
         const links = element('div', undefined, 'trace-mode');
         if (result.source_trace) links.append(traceLink(result.source_trace, 'Example ' + (index + 1) + ' source trace'));
         if (result.trace) links.append(traceLink(result.trace, 'Example ' + (index + 1) + ' evaluation trace'));
