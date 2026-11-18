@@ -11,9 +11,11 @@ const modules = {
   playground: ['Playground', 'Test prompt versions with your inputs.'],
   deployments: ['Deployments', 'Publish saved Agent versions by environment.'],
   agent: ['Agent', ''],
+  'console-agents': ['Agents', 'Manage Agent versions, evaluations, and releases.'],
   agents: ['All agents', 'Build an agent in Studio or connect one that runs in your application.'],
   studio: ['Studio', 'Send a test message and inspect the response and trace.']
 };
+const lifecycleTabs = [['versions', 'Versions'], ['evaluations', 'Evaluations'], ['releases', 'Releases']];
 let activeModule;
 let moduleRequest = 0;
 let records = [];
@@ -421,36 +423,63 @@ function renderModule(module, selectedTarget) {
 
   if (module === 'agents') panels.push(agentRegistry());
 
-  if (module === 'agent') {
+  if (module === 'console-agents' && !selectedTarget) {
+    const agents = ofKind('agent').filter(agent => agent.source !== 'external');
+    const items = agents.map(agent => {
+      const item = element('div', undefined, 'console-agent-row');
+      const identity = element('div');
+      identity.append(element('strong', agent.name));
+      if (agent.description) identity.append(element('p', agent.description));
+      const open = iconButton('arrow', 'Open', 'button');
+      open.setAttribute('aria-label', 'Open ' + agent.name + ' in Console');
+      open.addEventListener('click', () => openAgentDetail(agent.id, 'versions'));
+      item.append(identity, open);
+      return item;
+    });
+    const list = listPanel('Studio agents', items.length ? items : [element('p', 'Create an Agent in Home to manage its lifecycle here.')]);
+    list.classList.add('wide');
+    panels.push(list);
+  }
+
+  if (module === 'agent' || (module === 'console-agents' && selectedTarget)) {
+    const inConsole = module === 'console-agents';
     const agent = ofKind('agent').find(item => item.id === selectedTarget.id);
-    if (!agent) {
-      panels.push(listPanel('Agent unavailable', [element('p', 'Return to All agents to choose an Agent.')]));
+    if (!agent || (inConsole && (agent.source === 'external' || !accountStatus?.user))) {
+      const back = iconButton('arrow', inConsole ? 'Console agents' : 'All agents', 'button quiet');
+      back.addEventListener('click', () => loadModule(inConsole ? 'console-agents' : 'agents'));
+      panels.push(listPanel('Agent unavailable', [back]));
     } else {
       const external = agent.source === 'external';
-      const tabs = external ? [['integration', 'Integration'], ['activity', 'Activity']] :
-        [['studio', 'Studio'], ...(accountStatus?.user ?
-          [['versions', 'Versions'], ['evaluations', 'Evaluations'], ['releases', 'Releases']] : [])];
-      const section = tabs.some(([id]) => id === selectedTarget.section) ? selectedTarget.section : tabs[0][0];
-      headingText.replaceChildren(element('h1', agent.name));
-      byId('crumb').textContent = agent.name;
-      if (agent.description) headingText.append(element('p', agent.description));
-      const back = iconButton('arrow', 'All agents', 'button quiet setup-back');
-      back.addEventListener('click', () => loadModule('agents'));
-      heading.append(back);
-      const nav = element('nav', undefined, 'agent-detail-nav wide');
-      nav.setAttribute('aria-label', 'Agent sections');
-      for (const [id, label] of tabs) {
-        const button = element('button', label, 'trace-tab');
-        if (id === section) button.setAttribute('aria-current', 'page');
-        button.addEventListener('click', () => openAgentDetail(agent.id, id));
-        nav.append(button);
-      }
-      panels.push(nav);
-      if (section === 'studio') panels.push(studioWorkspace([agent], agent.id, updated => {
+      const tabs = inConsole ? lifecycleTabs : external ? [['integration', 'Integration'], ['activity', 'Activity']] : [];
+      const section = tabs.some(([id]) => id === selectedTarget.section) ? selectedTarget.section : tabs[0]?.[0] ?? 'studio';
+      const showIdentity = updated => {
         headingText.replaceChildren(element('h1', updated.name));
         byId('crumb').textContent = updated.name;
         if (updated.description) headingText.append(element('p', updated.description));
-      }));
+      };
+      showIdentity(agent);
+      const actions = element('div', undefined, 'section-actions');
+      const back = iconButton('arrow', inConsole ? 'Console agents' : 'All agents', 'button quiet setup-back');
+      back.addEventListener('click', () => loadModule(inConsole ? 'console-agents' : 'agents'));
+      actions.append(back);
+      if (!external && accountStatus?.user) {
+        const jump = iconButton(inConsole ? 'studio' : 'external', inConsole ? 'Open Studio' : 'Open in Console', 'button');
+        jump.addEventListener('click', () => openAgentDetail(agent.id, inConsole ? 'studio' : 'versions'));
+        actions.append(jump);
+      }
+      heading.append(actions);
+      if (tabs.length) {
+        const nav = element('nav', undefined, 'agent-detail-nav wide');
+        nav.setAttribute('aria-label', inConsole ? 'Agent lifecycle' : 'Agent sections');
+        for (const [id, label] of tabs) {
+          const button = element('button', label, 'trace-tab');
+          if (id === section) button.setAttribute('aria-current', 'page');
+          else button.addEventListener('click', () => openAgentDetail(agent.id, id));
+          nav.append(button);
+        }
+        panels.push(nav);
+      }
+      if (section === 'studio') panels.push(studioWorkspace([agent], agent.id, showIdentity));
       if (section === 'versions') panels.push(...agentReleasePanels(agent.id, 'versions'));
       if (section === 'releases') panels.push(...agentReleasePanels(agent.id, 'releases'));
       if (section === 'evaluations') panels.push(...agentEvaluationPanels(agent.id));
@@ -481,7 +510,8 @@ function renderModule(module, selectedTarget) {
 }
 
 function openAgentDetail(id, section) {
-  return loadModule('agent', {id, section});
+  const module = lifecycleTabs.some(([tab]) => tab === section) ? 'console-agents' : 'agent';
+  return loadModule(module, {id, section});
 }
 
 function agentEvaluationPanels(agentId) {
@@ -502,7 +532,8 @@ function agentEvaluationPanels(agentId) {
     return section;
   }));
   if (versions.length < 2 || !datasets.length) return [listPanel('Compare Agent versions', [
-    element('p', 'Save two versions of the same Agent in Deployments and add a dataset with expected text replies.')
+    element('p', agentId ? 'Save two versions in Versions and add a dataset with expected text replies.' :
+      'Save two versions of the same Agent and add a dataset with expected text replies.')
   ]), report];
   const baseline = field('baseline', 'Baseline version', choices);
   const candidate = field('candidate', 'Candidate version', choices);
@@ -1270,7 +1301,7 @@ async function loadModule(module, selectedTarget) {
   });
   try {
     if (module === 'feedback') await refresh();
-    if ((module === 'experiments' || (module === 'agent' && selectedTarget.section === 'evaluations')) && accountStatus?.user) {
+    if ((module === 'experiments' || (module === 'console-agents' && selectedTarget?.section === 'evaluations')) && accountStatus?.user) {
       const nextKeys = await keyRequest();
       if (!currentRequest()) return;
       apiKeys = nextKeys;
