@@ -815,78 +815,40 @@ function openAgentUsage(agent) {
 }
 
 function agentReleasePanels(agentId, manageVersions = false) {
-  const agents = ofKind('agent').filter(agent => agent.source !== 'external' && (!agentId || agent.id === agentId));
   const versions = ofKind('agent_version').filter(version => !agentId || version.agent === agentId);
   const releases = ofKind('agent_release').filter(release => !agentId || release.agent === agentId);
-  const reload = () => loadModule('agent', {id:agentId, section:'publish', manageVersions:true});
-  const agentField = field('agent', 'Agent', agents.map(agent => [agent.id, agent.name]));
-  if (agentId) {
-    agentField.querySelector('select').value = agentId;
-    agentField.hidden = true;
-  }
   const byVersion = new Map(versions.map(version => [version.id, version]));
   const env = [['staging', 'Staging'], ['production', 'Production']];
-  const save = agents.length ? formPanel('Save an Agent version', [
-    agentField,
-    field('label', 'Version label')
-  ], 'Save version', async data => {
-    await platformRequest('/agent-versions', data);
-    await reload();
-  }) : listPanel('Agent versions', [element('p', 'Create a Studio Agent first.')]);
-  const versionOptions = versions.map(version => [version.id, recordName(version.agent) + ' · ' + version.label]);
-  const publish = versions.length ? formPanel('Publish a saved version', [
-    element('p', 'Production requires the version to pass its latest Agent evaluation. Staging is available for testing.'),
-    field('version', 'Version', versionOptions), field('environment', 'Environment', env)
-  ], 'Publish version', async data => {
-    await platformRequest('/agent-releases', data);
-    await reload();
-  }) : listPanel('Publish a saved version', [element('p', 'Save a version before publishing.')]);
+  const reload = () => loadModule('agent', {id:agentId, section:'publish', manageVersions:true});
+  function openAction(title, fields, label, action) {
+    const form = formPanel(title, fields, label, async data => {
+      await action(data);
+      if (form.isConnected && byId('modal').open) {
+        byId('modal').close();
+        await reload();
+      }
+    });
+    form.firstElementChild.remove();
+    openModal(title, [form]);
+  }
   const active = new Map();
   for (const release of releases) {
     const key = release.agent + ':' + release.environment;
     if (!active.has(key)) active.set(key, release);
   }
-  const deployments = listPanel('Active Agent releases', Array.from(active.values(), release => {
-    const name = recordName(release.agent);
+  if (!agentId) return [listPanel('Active Agent releases', Array.from(active.values(), release => {
     const version = byVersion.get(release.version);
     const item = element('section', undefined, 'release-entry');
-    item.append(element('strong', name + ' · ' + release.environment),
+    item.append(element('strong', recordName(release.agent) + ' · ' + release.environment),
       element('p', (version?.label ?? release.version) + ' · ' + timeLabel(release.at)));
     const request = {target_kind:'agent_release', target:release.agent, environment:release.environment, input:'Your message'};
-    if (!agentId) item.append(expandable('Run via API', {endpoint:'POST /api/platform/runs', required_scope:'agents:run',
+    item.append(expandable('Run via API', {endpoint:'POST /api/platform/runs', required_scope:'agents:run',
       ...(version?.provider === hostedProvider ? {hosted_model_scope:'models:invoke'} : {}), body:request}));
-    if (!agentId) {
-      const open = iconButton('deploy', 'Open Publish', 'button quiet');
-      open.addEventListener('click', () => openAgentDetail(release.agent, 'publish'));
-      item.append(open);
-    }
-    const previous = byVersion.get(release.previous);
-    if (agentId && previous) {
-      const disclosure = element('details');
-      disclosure.append(element('summary', 'Roll back to ' + previous.label));
-      const rollback = element('button', 'Confirm rollback', 'button');
-      const status = element('p');
-      status.setAttribute('role', 'status');
-      rollback.addEventListener('click', async () => {
-        rollback.disabled = true;
-        try {
-          await platformRequest('/agent-releases', {version:previous.id, environment:release.environment,
-            expected_release:release.id});
-          await reload();
-        } catch (error) {
-          status.textContent = error.message;
-          rollback.disabled = false;
-        }
-      });
-      disclosure.append(rollback, status);
-      item.append(disclosure);
-    }
+    const open = iconButton('deploy', 'Open Publish', 'button quiet');
+    open.addEventListener('click', () => openAgentDetail(release.agent, 'publish'));
+    item.append(open);
     return item;
-  }));
-  const history = listPanel('Saved Agent versions', versions.map(version => expandable(
-    recordName(version.agent) + ' · ' + version.label, {id:version.id, model:version.model,
-      max_tokens:version.max_tokens, instructions:version.instructions})));
-  if (!agentId) return [deployments];
+  }))];
   const environments = listPanel('Environments', env.map(([id, label]) => {
     const activeRelease = active.get(agentId + ':' + id);
     const row = element('div', undefined, 'console-agent-row');
@@ -896,8 +858,20 @@ function agentReleasePanels(agentId, manageVersions = false) {
       const version = byVersion.get(activeRelease.version);
       identity.append(element('p', (version?.label ?? activeRelease.version) + ' · ' + timeLabel(activeRelease.at)));
     }
-    row.append(identity, element('span', activeRelease ? 'Published' : 'Not published',
+    const actions = element('div', undefined, 'section-actions');
+    actions.append(element('span', activeRelease ? 'Published' : 'Not published',
       activeRelease ? 'pill success' : 'pill'));
+    const previous = byVersion.get(activeRelease?.previous);
+    if (previous) {
+      const rollback = element('button', 'Roll back', 'button quiet');
+      rollback.setAttribute('aria-label', 'Roll back ' + label);
+      rollback.addEventListener('click', () => openAction('Roll back ' + label, [
+        element('p', 'Restore ' + previous.label + ' to ' + label + '.')
+      ], 'Confirm rollback', () => platformRequest('/agent-releases',
+        {version:previous.id, environment:id, expected_release:activeRelease.id})));
+      actions.append(rollback);
+    }
+    row.append(identity, actions);
     return row;
   }));
   environments.classList.add('wide');
@@ -906,9 +880,33 @@ function agentReleasePanels(agentId, manageVersions = false) {
   const summary = element('summary');
   summary.append(element('strong', 'Manage versions'),
     element('small', versions.length === 1 ? '1 saved version' : versions.length + ' saved versions'));
-  const content = element('div', undefined, 'module-grid');
-  content.append(save, publish, history, deployments);
-  management.append(summary, content);
+  const save = iconButton('plus', 'Save version', 'button');
+  save.addEventListener('click', () => {
+    const label = field('label', 'Version name');
+    label.querySelector('input').maxLength = 80;
+    openAction('Save version', [label], 'Save', data => platformRequest('/agent-versions', {agent:agentId, ...data}));
+  });
+  const actions = element('div', undefined, 'section-actions publish-version-actions');
+  actions.append(save);
+  const history = element('div');
+  for (const version of versions) {
+    const row = element('div', undefined, 'console-agent-row publish-version-row');
+    const info = element('div');
+    info.append(expandable(version.label, {id:version.id, model:version.model,
+      max_tokens:version.max_tokens, instructions:version.instructions}));
+    const deploy = element('button', 'Publish', 'button');
+    deploy.setAttribute('aria-label', 'Publish ' + version.label);
+    deploy.addEventListener('click', () => {
+      const environment = field('environment', 'Environment', env);
+      environment.querySelector('select').value = 'staging';
+      openAction('Publish ' + version.label, [environment,
+        element('small', 'Production requires a passing evaluation.')], 'Publish',
+        data => platformRequest('/agent-releases', {version:version.id, ...data}));
+    });
+    row.append(info, deploy);
+    history.append(row);
+  }
+  management.append(summary, actions, history);
   return [channelPublishingPanel(agentId, active), environments, management];
 }
 
@@ -926,7 +924,7 @@ function renderWeComStatus(container, result, agentId) {
   const label = result.agent && !matches ? '已配置给其他 Agent' : wecomConnectionLabels[result.status] ?? result.status;
   const state = element('span', label, result.status === 'connected' && matches ? 'pill success' : 'pill');
   container.replaceChildren(state);
-  if (result.agent) container.append(element('span', recordName(result.agent) + ' · ' + result.environment));
+  if (result.agent) container.append(element('span', matches ? result.environment : recordName(result.agent) + ' · ' + result.environment));
   if (result.detail && matches) container.append(element('small', result.detail));
   if (matches && result.delivery) {
     const delivery = result.delivery;
