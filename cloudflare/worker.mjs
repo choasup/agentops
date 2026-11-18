@@ -9,9 +9,12 @@ import { cookie, cookieValue, emailConfigured, json, randomId as id, sessionCook
 export { Accounts } from './accounts.mjs';
 
 const environments = ['local', 'development', 'staging', 'production'];
+const wecomProvider = 'wecom-channel';
+const wecomConnection = {name:'WeCom channel', tool:'read_wecom_channel_posts'};
 const readOnlyConnections = new Map([
   ['cloudflare-docs', {details:docsConnection, verify:verifyDocsConnection, read:searchDocs}],
-  ['github-agentops', {details:githubConnection, verify:verifyReadmeConnection, read:readReadme}]
+  ['github-agentops', {details:githubConnection, verify:verifyReadmeConnection, read:readReadme}],
+  [wecomProvider, {details:wecomConnection}]
 ]);
 const connectionProvider = connection => connection.provider ??
   (connection.tool === docsConnection.tool ? 'cloudflare-docs' : undefined);
@@ -21,7 +24,7 @@ const chatPath = '/v1/chat/completions';
 class InputError extends Error {}
 
 function publicRecord(record) {
-  const {api_key, encrypted_key, ...visible} = record;
+  const {api_key, encrypted_key, wecom_bot_id, ...visible} = record;
   return record.kind === 'model' ? {...visible, has_api_key:Boolean(api_key || encrypted_key)} : visible;
 }
 
@@ -241,6 +244,11 @@ export class Workspace extends DurableObject {
     }
   }
 
+  usesWeComConnection(records, agent) {
+    return records.some(item => item.kind === 'mcp_connection' && item.id === agent.mcp_connection &&
+      connectionProvider(item) === wecomProvider);
+  }
+
   assignedReadTool(records, agent, input) {
     if (!agent.mcp_connection) return undefined;
     const connection = records.find(item => item.kind === 'mcp_connection' &&
@@ -255,6 +263,20 @@ export class Workspace extends DurableObject {
       const current = this.rows('records').find(item => item.id === connection.id && !item.revoked);
       if (!current) throw new BillingError('Tool connection is no longer authorized', 403);
       try {
+        if (provider === wecomProvider) {
+          const start = performance.now();
+          const result = await this.wecom.readTopicPosts(current.topic_id, current.wecom_bot_id);
+          if (result.state !== 'ok') {
+            throw new Error('WeCom connection changed or is unavailable');
+          }
+          const posts = result.posts.filter(post => !post?.is_recalled && typeof post?.content === 'string')
+            .slice(0, 5).map(post => ({
+              content:Array.from(post.content).slice(0, 400).join(''),
+              ...(Number.isInteger(post.create_time) ? {created:post.create_time} : {})
+            }));
+          return {name:wecomConnection.tool, type:'tool', connection_id:current.id, connection_scope:current.name,
+            input:{limit:5, recent_minutes:15}, output:{channel:current.name, posts}, duration:performance.now() - start};
+        }
         return {...await tool.read(input.trim()), connection_id:connection.id,
           ...(tool.details.scope ? {connection_scope:tool.details.scope} : {})};
       } catch {
@@ -537,6 +559,25 @@ export class Workspace extends DurableObject {
     if (action === 'mcp-connect') {
       const provider = readOnlyConnections.get(data.provider);
       if (!provider) throw new InputError('Unknown tool connection');
+      if (data.provider === wecomProvider) {
+        if (!studioSession) throw new BillingError('Sign in to connect a WeCom channel', 403);
+        const topicId = requiredText(data, 'topic_id');
+        const name = requiredText(data, 'name');
+        if (new TextEncoder().encode(topicId).length > 128 || name.length > 80) {
+          throw new InputError('Use a channel name up to 80 characters and a topic ID up to 128 bytes');
+        }
+        const result = await this.wecom.readTopicPosts(topicId);
+        if (result.state !== 'ok') throw new BillingError(result.state === 'rejected'
+          ? 'WeCom rejected the channel read (code ' + result.code + ')'
+          : 'Could not verify channel read access. Check the connected bot and topic ID.', 502);
+        const existing = this.rows('records').find(item => item.kind === 'mcp_connection' &&
+          item.provider === wecomProvider && !item.revoked);
+        if (existing && (existing.topic_id !== topicId || existing.wecom_bot_id !== result.botId)) {
+          throw new InputError('Disconnect the current WeCom channel before connecting another one');
+        }
+        return publicRecord(existing ?? this.save('mcp_connection', {...wecomConnection, name, topic_id:topicId,
+          provider:wecomProvider, wecom_bot_id:result.botId}));
+      }
       const matches = item => item.kind === 'mcp_connection' && !item.revoked && connectionProvider(item) === data.provider;
       const existing = records.find(matches);
       if (existing) return existing;
@@ -547,9 +588,12 @@ export class Workspace extends DurableObject {
     }
     if (action === 'mcp-disconnect') {
       const connection = find('connection', 'mcp_connection');
+      if (connection.provider === wecomProvider && !studioSession) {
+        throw new BillingError('Sign in to manage WeCom connections', 403);
+      }
       const revoked = {...connection, revoked:new Date().toISOString()};
       this.sql.exec('UPDATE records SET payload=? WHERE id=?', JSON.stringify(revoked), revoked.id);
-      return revoked;
+      return publicRecord(revoked);
     }
     if (action === 'datasets') return this.save('dataset', {name:requiredText(data, 'name')});
     if (action === 'examples') {
@@ -624,6 +668,9 @@ export class Workspace extends DurableObject {
     }
     if (action === 'agent-releases') {
       const version = find('version', 'agent_version');
+      if (this.usesWeComConnection(records, version)) {
+        throw new InputError('Versions with a WeCom channel connection are for Studio only');
+      }
       if (!releaseEnvironments.includes(data.environment)) throw new InputError('Choose staging or production');
       const agent = records.find(item => item.kind === 'agent' && item.id === version.agent);
       if (!agent || agent.source === 'external') throw new InputError('Studio agent was not found');
@@ -648,6 +695,9 @@ export class Workspace extends DurableObject {
     if (action === 'agent-evaluations') {
       const baseline = find('baseline', 'agent_version');
       const candidate = find('candidate', 'agent_version');
+      if (!studioSession && [baseline, candidate].some(version => this.usesWeComConnection(records, version))) {
+        throw new BillingError('Sign in to evaluate a WeCom channel connection', 403);
+      }
       if (baseline.id === candidate.id || baseline.agent !== candidate.agent) {
         throw new InputError('Choose two different versions of the same Agent');
       }
@@ -709,6 +759,9 @@ export class Workspace extends DurableObject {
         if (!version) throw new InputError('No version is published to this environment');
         await this.verifyVersionModel(records, version);
         target = {...version, id:agent.id, identifier:agent.identifier};
+      }
+      if (this.usesWeComConnection(records, target) && (!studioSession || kind !== 'agent' || channelAttribution)) {
+        throw new BillingError('Use a WeCom channel connection in signed-in Studio', 403);
       }
       const history = data.history === undefined ? [] : data.history;
       if (data.history !== undefined && (kind === 'deployment' || !Array.isArray(history) ||

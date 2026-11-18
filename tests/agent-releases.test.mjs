@@ -312,4 +312,18 @@ test('published Agent configuration is isolated by workspace and environment and
   const access = await create('wecom-topic-probe', {agent:agent.id, topic_id:'fixture-topic', marker:'MARKER-42'});
   assert.deepEqual(access, {state:'matched', checked:1, has_more:false});
   assert.deepEqual(gateway.diagnostics.at(-1), {event:'topic_posts', result:'matched'});
+  const channel = await create('mcp-connect', {provider:'wecom-channel',
+    name:'Fixture channel', topic_id:'fixture-topic'});
+  assert.equal(channel.wecom_bot_id, undefined);
+  const connectedAgent = await create('agents', {...profile, instructions:'Summarize recent posts', mcp_connection:channel.id});
+  const channelRun = {target_kind:'agent', target:connectedAgent.id, input:'Read recent posts'};
+  assert.equal((await action('runs', channelRun, {token:key.token})).status,403);
+  const read = await create('runs', channelRun);
+  assert.deepEqual(read.steps[0].output, {channel:'Fixture channel', posts:[{content:'test-MARKER-42'}]});
+  assert.match(JSON.stringify(modelCalls.at(-1).messages), /test-MARKER-42/);
+  assert.doesNotMatch(JSON.stringify(read), /private fixture/);
+  const privateVersion = await create('agent-versions', {agent:connectedAgent.id,label:'Channel Studio'});
+  assert.equal((await action('agent-releases', {version:privateVersion.id,environment:'staging'})).status,400);
+  await gateway.ctx.storage.put('wecom-bot', {...bot, botId:'other-bot'});
+  assert.equal((await action('runs', channelRun)).status,502);
 });

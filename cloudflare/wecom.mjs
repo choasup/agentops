@@ -152,10 +152,12 @@ export class WeComGateway {
     delete discovery.marker;
   }
 
-  async probeTopic(agent, topicId, marker) {
+  async readTopicPosts(topicId, expectedBotId) {
     const config = await this.ctx.storage.get(configKey);
     const socket = this.socket;
-    if (config?.agent !== agent || !socket || this.status !== 'connected') return {state:'disconnected'};
+    if (!config || !socket || this.status !== 'connected' || (expectedBotId && config.botId !== expectedBotId)) {
+      return {state:'disconnected'};
+    }
     const end = Math.floor(Date.now() / 1000);
     let frame;
     try {
@@ -165,19 +167,27 @@ export class WeComGateway {
       this.diagnostic('topic_posts', 'no_response');
       return {state:'no_response'};
     }
+    if (this.socket !== socket) return {state:'disconnected'};
     if (frame.errcode !== 0) {
       this.diagnostic('topic_posts', 'rejected');
       return {state:'rejected', code:frame.errcode};
     }
-    const posts = frame.body?.post_list;
-    if (!Array.isArray(posts)) {
+    if (!Array.isArray(frame.body?.post_list)) {
       this.diagnostic('topic_posts', 'invalid_response');
       return {state:'invalid_response'};
     }
-    const found = posts.some(post => !post?.is_recalled && typeof post?.content === 'string' &&
+    return {state:'ok', posts:frame.body.post_list, has_more:Boolean(frame.body.has_more), botId:config.botId};
+  }
+
+  async probeTopic(agent, topicId, marker) {
+    const config = await this.ctx.storage.get(configKey);
+    if (config?.agent !== agent) return {state:'disconnected'};
+    const result = await this.readTopicPosts(topicId, config.botId);
+    if (result.state !== 'ok') return result;
+    const found = result.posts.some(post => !post?.is_recalled && typeof post?.content === 'string' &&
       post.content.includes(marker));
     this.diagnostic('topic_posts', found ? 'matched' : 'not_matched');
-    return {state:found ? 'matched' : 'not_matched', checked:posts.length, has_more:Boolean(frame.body.has_more)};
+    return {state:found ? 'matched' : 'not_matched', checked:result.posts.length, has_more:result.has_more};
   }
 
   async updateDelivery(socket, key, state, detail) {

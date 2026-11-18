@@ -280,7 +280,10 @@ const connectionCatalogue = [
     source:'https://docs.mcp.cloudflare.com/mcp'},
   {id:'github-agentops', brand:'GitHub', logo:'github.svg', name:'GitHub · agentops',
     access:'Read-only connector', description:'Read the public README in choasup/agentops on main.',
-    source:'https://github.com/choasup/agentops'}
+    source:'https://github.com/choasup/agentops'},
+  {id:'wecom-channel', brand:'WeCom', name:'WeCom channel',
+    access:'Read-only connector', description:'Read recent posts from one channel using your connected WeCom bot.',
+    source:'https://developer.work.weixin.qq.com/document/path/101964'}
 ];
 
 function activeConnection(provider) {
@@ -290,10 +293,15 @@ function activeConnection(provider) {
 
 function connectionIdentity(provider) {
   const identity = element('div', undefined, 'connection-identity');
-  const logo = element('img');
-  logo.src = 'connectors/' + provider.logo;
-  logo.alt = '';
-  identity.append(logo, element('span', provider.brand));
+  if (provider.logo) {
+    const logo = element('img');
+    logo.src = 'connectors/' + provider.logo;
+    logo.alt = '';
+    identity.append(logo);
+  } else {
+    identity.append(icon('external'));
+  }
+  identity.append(element('span', provider.brand));
   return identity;
 }
 
@@ -308,10 +316,13 @@ function openConnectionReview(provider, disconnect = false) {
     return;
   }
   if (disconnect) details.push(element('p', 'Agents using this connection will need a different tool or a new connection.'));
+  if (provider.id === 'wecom-channel' && !disconnect) details.push(
+    field('name', 'Channel display name'), field('topic_id', 'Channel topic ID'),
+    element('p', 'Use in signed-in Studio. Up to five recent post excerpts are sent to Hosted DeepSeek and included in the Trace.'));
   const form = formPanel(disconnect ? 'Review disconnection' : 'Review access', details,
-    disconnect ? 'Disconnect' : 'Verify and connect', async () => {
+    disconnect ? 'Disconnect' : 'Verify and connect', async data => {
       if (disconnect) await platformRequest('/mcp-disconnect', {connection:connection.id});
-      else await platformRequest('/mcp-connect', {provider:provider.id});
+      else await platformRequest('/mcp-connect', {...data, provider:provider.id});
       byId('modal').close();
       await loadModule('connections');
     });
@@ -335,7 +346,7 @@ function connectionCard(provider) {
   });
   const footer = element('div', undefined, 'connection-card-head');
   footer.append(element('span', provider.access, 'pill'), action);
-  card.append(head, element('h2', provider.name), element('p', provider.description), footer);
+  card.append(head, element('h2', connection?.name ?? provider.name), element('p', provider.description), footer);
   return card;
 }
 
