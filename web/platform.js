@@ -912,9 +912,35 @@ function agentReleasePanels(agentId, manageVersions = false) {
   return [channelPublishingPanel(agentId, active), environments, management];
 }
 
-function openHostedWeCom(agentId, environments) {
+const wecomConnectionLabels = {
+  connected:'已连接', disconnected:'未连接', connecting:'已保存，正在连接',
+  reconnecting:'连接失败，正在重试', 'authentication failed':'企微鉴权失败'
+};
+const wecomDeliveryLabels = {
+  received:'已收到消息，正在处理', replied:'企微已确认收到回复',
+  agent_failed:'Agent 生成回复失败', reply_failed:'回复未获企微确认'
+};
+
+function renderWeComStatus(container, result, agentId) {
+  const matches = result.agent === agentId;
+  const label = result.agent && !matches ? '已配置给其他 Agent' : wecomConnectionLabels[result.status] ?? result.status;
+  const state = element('span', label, result.status === 'connected' && matches ? 'pill success' : 'pill');
+  container.replaceChildren(state);
+  if (result.agent) container.append(element('span', recordName(result.agent) + ' · ' + result.environment));
+  if (result.detail && matches) container.append(element('small', result.detail));
+  if (matches && result.delivery) {
+    const delivery = result.delivery;
+    container.append(element('small', (wecomDeliveryLabels[delivery.state] ?? delivery.state) +
+      ' · ' + timeLabel(delivery.at) + (delivery.detail ? ' · ' + delivery.detail : '')));
+  } else if (matches && result.status === 'connected') {
+    container.append(element('small', '等待首条文本消息'));
+  }
+  if (matches && result.lastTrace) container.append(traceLink(result.lastTrace));
+}
+
+function openHostedWeCom(agentId, environments, onStatus) {
   const heading = element('div', undefined, 'wecom-setup');
-  const status = element('p', 'Checking connection…');
+  const status = element('div', '正在检查连接…', 'wecom-status');
   status.setAttribute('role', 'status');
   const current = element('div', undefined, 'section-actions');
   const refreshStatus = element('button', 'Refresh status', 'button quiet');
@@ -925,15 +951,9 @@ function openHostedWeCom(agentId, environments) {
   async function update(data) {
     try {
       const result = data ?? await platformRequest('/wecom-status');
-      status.textContent = (result.agent ? recordName(result.agent) + ' · ' + result.environment + ' · ' : '') +
-        result.status + (result.detail ? ' · ' + result.detail : '');
+      renderWeComStatus(status, result, agentId);
+      onStatus?.(result);
       disconnect.hidden = !result.agent;
-      heading.querySelector('.wecom-trace')?.remove();
-      if (result.lastTrace) {
-        const trace = element('div', undefined, 'wecom-trace');
-        trace.append(element('span', 'Latest WeCom Trace '), traceLink(result.lastTrace));
-        heading.append(trace);
-      }
     } catch (error) {status.textContent = error.message;}
   }
   refreshStatus.addEventListener('click', () => update());
@@ -955,7 +975,12 @@ function openHostedWeCom(agentId, environments) {
     secretInput.value = '';
   });
   openModal('企业微信智能机器人', [heading, form]);
-  update();
+  async function poll() {
+    if (!heading.isConnected || !byId('modal').open) return;
+    await update();
+    setTimeout(poll, 3000);
+  }
+  poll();
 }
 
 function channelPublishingPanel(agentId, releases) {
@@ -971,10 +996,26 @@ function channelPublishingPanel(agentId, releases) {
     const info = element('div');
     info.append(element('strong', channel.name), element('p', channel.description));
     const setup = iconButton('external', 'Set up', channel.mode === 'wecom' ? 'button primary' : 'button');
+    const connection = element('div', undefined, 'wecom-status');
+    const onStatus = channel.mode === 'wecom' ? result => {
+      renderWeComStatus(connection, result, agentId);
+      setup.querySelector('span').textContent = result.agent === agentId ? 'Manage' : 'Set up';
+    } : undefined;
+    if (onStatus) {
+      connection.textContent = '正在检查连接…';
+      info.append(connection);
+      const poll = async () => {
+        if (!row.isConnected) return;
+        try {onStatus(await platformRequest('/wecom-status'));}
+        catch {connection.textContent = '暂时无法读取连接状态';}
+        setTimeout(poll, 5000);
+      };
+      setTimeout(poll, 0);
+    }
     const environments = ['production', 'staging'].filter(env => releases.has(agentId + ':' + env));
     setup.setAttribute('aria-label', 'Set up ' + channel.name);
     function continueSetup(environments) {
-      if (channel.mode === 'wecom') return openHostedWeCom(agentId, environments);
+      if (channel.mode === 'wecom') return openHostedWeCom(agentId, environments, onStatus);
       const choice = field('environment', 'Environment', environments.map(env =>
         [env, env === 'production' ? 'Production' : 'Staging']));
       const select = choice.querySelector('select');

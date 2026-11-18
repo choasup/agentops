@@ -7,12 +7,14 @@ export class WeComGateway {
     this.run = run;
     this.status = 'connecting';
     this.seen = new Map();
+    this.pendingReplies = new Map();
   }
 
   async getStatus() {
     const config = await this.ctx.storage.get(configKey);
     return config ? {agent:config.agent, environment:config.environment,
-      status:this.status, detail:this.detail, lastTrace:this.lastTrace ?? await this.ctx.storage.get('wecom-trace')} :
+      status:this.status, detail:this.detail, lastTrace:await this.ctx.storage.get('wecom-trace'),
+      delivery:await this.ctx.storage.get('wecom-delivery')} :
       {status:'disconnected'};
   }
 
@@ -20,9 +22,8 @@ export class WeComGateway {
     this.close();
     this.status = 'connecting';
     this.detail = undefined;
-    this.lastTrace = undefined;
     this.seen.clear();
-    await this.ctx.storage.delete('wecom-trace');
+    await this.ctx.storage.delete(['wecom-trace','wecom-delivery']);
     if (config) {
       await this.ctx.storage.put(configKey, config);
       await this.ctx.storage.setAlarm(Date.now()+1000);
@@ -56,10 +57,10 @@ export class WeComGateway {
       const secret = await this.decrypt(config.secret);
       if (!secret) throw new Error('Saved Bot Secret could not be opened');
       const response = await fetch('https://openws.work.weixin.qq.com/', {
-        headers:{Upgrade:'websocket'}, redirect:'error', signal:AbortSignal.timeout(10_000)
+        headers:{Upgrade:'websocket'}, redirect:'manual', signal:AbortSignal.timeout(10_000)
       });
       const socket = response.webSocket;
-      if (!socket) throw new Error('WeCom did not accept the WebSocket upgrade');
+      if (!socket) throw new Error('WeCom WebSocket upgrade returned HTTP ' + response.status);
       // A concurrent configuration update owns the next connection attempt.
       const latest = await this.ctx.storage.get(configKey);
       socket.accept();
@@ -87,6 +88,36 @@ export class WeComGateway {
     }
   }
 
+  reply(socket, request, streamId, content, finish) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pendingReplies.delete(request);
+        reject(new Error('No reply acknowledgement from WeCom'));
+      }, 5000);
+      this.pendingReplies.set(request, {
+        socket,
+        finish(frame) {
+          clearTimeout(timer);
+          if (frame.errcode === 0) resolve();
+          else reject(new Error('WeCom rejected the reply (' + frame.errcode + ')'));
+        }
+      });
+      try {
+        this.send(socket, 'aibot_respond_msg', request, {msgtype:'stream',stream:{id:streamId,content,finish}});
+      } catch (error) {
+        this.pendingReplies.delete(request);
+        clearTimeout(timer);
+        reject(error);
+      }
+    });
+  }
+
+  async updateDelivery(socket, key, state, detail) {
+    if (this.socket === socket && this.latestMessage === key) {
+      await this.ctx.storage.put('wecom-delivery', {state, detail, at:new Date().toISOString()});
+    }
+  }
+
   async onMessage(socket, config, data) {
     if (this.socket !== socket || typeof data !== 'string' || data.length > 100_000) return;
     const frame = JSON.parse(data);
@@ -99,26 +130,46 @@ export class WeComGateway {
       return;
     }
     if (request.startsWith('ping_') && frame.errcode === 0) this.lastAck = Date.now();
-    if (frame.cmd !== 'aibot_msg_callback' || this.status !== 'connected') return;
+    if (frame.cmd !== 'aibot_msg_callback') {
+      const pending = this.pendingReplies.get(request);
+      if (pending?.socket === socket && Number.isInteger(frame.errcode)) {
+        this.pendingReplies.delete(request);
+        pending.finish(frame);
+      }
+      return;
+    }
+    if (this.status !== 'connected') return;
     const text = frame.body?.text?.content;
     const key = frame.body?.msgid ?? request;
     if (typeof text !== 'string' || !text.trim() || this.seen.has(key)) return;
     this.seen.set(key, true);
     if (this.seen.size > 2048) this.seen.delete(this.seen.keys().next().value);
     const id = crypto.randomUUID();
-    const reply = (content, finish) => this.send(socket, 'aibot_respond_msg', request,
-      {msgtype:'stream',stream:{id,content,finish}});
-    reply('正在处理，请稍候…', false);
+    this.latestMessage = key;
+    const acknowledgement = this.reply(socket, request, id, '正在处理，请稍候…', false);
+    try {
+      await Promise.all([this.updateDelivery(socket, key, 'received'), acknowledgement]);
+    } catch (error) {
+      await this.updateDelivery(socket, key, 'reply_failed', error.message);
+      return;
+    }
     let content;
+    let failure;
     try {
       const trace = await this.run(config, text);
-      if (trace.status === 'error' || typeof trace.output !== 'string') throw new Error('Agent failed');
-      this.lastTrace = trace.id;
-      if (this.socket === socket) await this.ctx.storage.put('wecom-trace', trace.id);
+      if (this.socket === socket && this.latestMessage === key) await this.ctx.storage.put('wecom-trace', trace.id);
+      if (trace.status === 'error' || typeof trace.output !== 'string') throw new Error(trace.error ?? 'Agent could not generate a reply');
       content = trace.output.trim() || '暂时没有可发送的回复。';
-    } catch {
+    } catch (error) {
+      failure = error.message;
       content = '暂时无法回复，请稍后重试。';
     }
-    if (this.socket === socket) reply(Array.from(content).slice(0, 3000).join(''), true);
+    if (this.socket !== socket) return;
+    try {
+      await this.reply(socket, request, id, Array.from(content).slice(0, 2048).join(''), true);
+      await this.updateDelivery(socket, key, failure ? 'agent_failed' : 'replied', failure);
+    } catch (error) {
+      await this.updateDelivery(socket, key, 'reply_failed', error.message);
+    }
   }
 }
