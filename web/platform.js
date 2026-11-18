@@ -1605,7 +1605,7 @@ async function loadModule(module, selectedTarget) {
   const currentRequest = () => request === moduleRequest && activeModule === module && !platformContent.hidden;
   activeModule = module;
   if (['agent', 'agents', 'studio', 'connections', 'skills'].includes(module)) showWorkspaceArea('home');
-  else if (!['models', 'billing'].includes(module)) showWorkspaceArea('console');
+  else showWorkspaceArea('console');
   closeWorkspaceMenu();
   byId('tracing-content').hidden = true;
   platformContent.hidden = false;
