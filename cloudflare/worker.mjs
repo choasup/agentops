@@ -274,7 +274,7 @@ export class Workspace extends DurableObject {
               content:Array.from(post.content).slice(0, 400).join(''),
               ...(Number.isInteger(post.create_time) ? {created:post.create_time} : {})
             }));
-          return {name:wecomConnection.tool, type:'tool', connection_id:current.id, connection_scope:current.name,
+          return {name:wecomConnection.tool, type:'tool', connection_id:current.id, connection_scope:'WeCom · ' + current.name,
             input:{limit:5, recent_minutes:15}, output:{channel:current.name, posts}, duration:performance.now() - start};
         }
         return {...await tool.read(input.trim()), connection_id:connection.id,
@@ -571,10 +571,7 @@ export class Workspace extends DurableObject {
           ? 'WeCom rejected the channel read (code ' + result.code + ')'
           : 'Could not verify channel read access. Check the connected bot and topic ID.', 502);
         const existing = this.rows('records').find(item => item.kind === 'mcp_connection' &&
-          item.provider === wecomProvider && !item.revoked);
-        if (existing && (existing.topic_id !== topicId || existing.wecom_bot_id !== result.botId)) {
-          throw new InputError('Disconnect the current WeCom channel before connecting another one');
-        }
+          item.provider === wecomProvider && !item.revoked && item.topic_id === topicId && item.wecom_bot_id === result.botId);
         return publicRecord(existing ?? this.save('mcp_connection', {...wecomConnection, name, topic_id:topicId,
           provider:wecomProvider, wecom_bot_id:result.botId}));
       }

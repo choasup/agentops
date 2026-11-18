@@ -281,8 +281,8 @@ const connectionCatalogue = [
   {id:'github-agentops', brand:'GitHub', logo:'github.svg', name:'GitHub · agentops',
     access:'Read-only connector', description:'Read the public README in choasup/agentops on main.',
     source:'https://github.com/choasup/agentops'},
-  {id:'wecom-channel', brand:'WeCom', name:'WeCom channel',
-    access:'Read-only connector', description:'Read recent posts from one channel using your connected WeCom bot.',
+  {id:'wecom-channel', brand:'WeCom', name:'WeCom',
+    access:'Read-only connector', description:'Read recent posts from channels authorized through your WeCom bot.',
     source:'https://developer.work.weixin.qq.com/document/path/101964'}
 ];
 
@@ -383,7 +383,44 @@ function openWeComChannelConnection(provider) {
   waitForTopic();
 }
 
+const readWeComPosts = '读取近期帖子';
+const isWeComChannel = item => item.provider === 'wecom-channel';
+const toolDisplayName = item => isWeComChannel(item) ? 'WeCom · ' + item.name : item.name;
+
+function openWeComConnector(provider) {
+  const channels = ofKind('mcp_connection').filter(item => isWeComChannel(item) && !item.revoked);
+  const add = iconButton('plus', 'Add channel', 'button primary');
+  add.addEventListener('click', () => openWeComChannelConnection(provider));
+  const status = element('p', 'Checking WeCom bot…');
+  status.setAttribute('role', 'status');
+  const list = listPanel('Authorized channels', channels.length ? channels.map(channel => {
+    const row = element('div', undefined, 'studio-attachment-row');
+    const text = element('div');
+    text.append(element('strong', channel.name), element('small', readWeComPosts));
+    const remove = element('button', 'Disconnect', 'button quiet');
+    remove.setAttribute('aria-label', 'Disconnect ' + channel.name);
+    remove.addEventListener('click', () => openModal('Disconnect ' + channel.name, [
+      formPanel('Remove channel access', [element('p', 'Agents using this channel will lose read access.')],
+        'Disconnect channel', async () => {
+          await platformRequest('/mcp-disconnect', {connection:channel.id});
+          await loadModule('connections');
+          openWeComConnector(provider);
+        })
+    ]));
+    row.append(text, remove);
+    return row;
+  }) : [element('p', 'Add a channel to grant read access.')]);
+  openModal('WeCom', [status, list, add]);
+  platformRequest('/wecom-status').then(result => {
+    if (!status.isConnected) return;
+    status.textContent = result.status === 'connected'
+      ? 'Bot connected · ' + recordName(result.agent) + ' · ' + result.environment
+      : 'Bot ' + (wecomConnectionLabels[result.status] ?? result.status);
+  }).catch(error => {status.textContent = error.message;});
+}
+
 function openConnectionReview(provider, disconnect = false) {
+  if (provider.id === 'wecom-channel') return openWeComConnector(provider);
   const connection = activeConnection(provider);
   const connected = Boolean(connection);
   const name = disconnect ? 'Disconnect ' : connected ? '' : 'Connect ';
@@ -394,7 +431,6 @@ function openConnectionReview(provider, disconnect = false) {
     return;
   }
   if (disconnect) details.push(element('p', 'Agents using this connection will need a different tool or a new connection.'));
-  if (provider.id === 'wecom-channel' && !disconnect) return openWeComChannelConnection(provider);
   const form = formPanel(disconnect ? 'Review disconnection' : 'Review access', details,
     disconnect ? 'Disconnect' : 'Verify and connect', async data => {
       if (disconnect) await platformRequest('/mcp-disconnect', {connection:connection.id});
@@ -414,7 +450,7 @@ function connectionCard(provider) {
   const action = iconButton(connection ? 'settings' : 'plus', connection ? 'Manage' : 'Connect', 'button');
   action.setAttribute('aria-label', (connection ? 'Manage ' : 'Connect ') + provider.name);
   action.addEventListener('click', () => {
-    if (!connection) return openConnectionReview(provider);
+    if (provider.id === 'wecom-channel' || !connection) return openConnectionReview(provider);
     const disconnect = iconButton('close', 'Disconnect', 'button');
     disconnect.addEventListener('click', () => openConnectionReview(provider, true));
     openModal(provider.name, [connectionIdentity(provider), element('p', provider.description),
@@ -422,7 +458,11 @@ function connectionCard(provider) {
   });
   const footer = element('div', undefined, 'connection-card-head');
   footer.append(element('span', provider.access, 'pill'), action);
-  card.append(head, element('h2', connection?.name ?? provider.name), element('p', provider.description), footer);
+  const wecom = provider.id === 'wecom-channel';
+  const channelCount = wecom ? ofKind('mcp_connection').filter(item => isWeComChannel(item) && !item.revoked).length : 0;
+  card.append(head, element('h2', wecom ? provider.name : connection?.name ?? provider.name),
+    element('p', wecom && channelCount ? channelCount + (channelCount === 1 ? ' authorized channel' : ' authorized channels') :
+      provider.description), footer);
   return card;
 }
 
@@ -1336,7 +1376,8 @@ function studioAttachments(data, modelInput) {
       (remove ? add : current.querySelector('button') ?? add).focus();
     };
     const detail = item => {
-      if (tool) return item.revoked ? 'Disconnected' : item.scope ?? 'Read-only';
+      if (tool) return item.revoked ? 'Disconnected' : isWeComChannel(item)
+        ? readWeComPosts : item.scope ?? 'Read-only';
       if (item.builtin) return item.source + ' · Built-in';
       if (!item.requires) return '';
       const provider = connectionCatalogue.find(entry => entry.id === item.requires);
@@ -1353,11 +1394,11 @@ function studioAttachments(data, modelInput) {
       if (installed) {
         const row = element('div', undefined, 'studio-attachment-row');
         const identity = element('div');
-        identity.append(element('strong', installed.name));
+        identity.append(element('strong', tool ? toolDisplayName(installed) : installed.name));
         if (detail(installed)) identity.append(element('small', detail(installed)));
         const remove = iconButton('close', 'Remove', 'button quiet');
         remove.type = 'button';
-        remove.setAttribute('aria-label', 'Remove ' + installed.name);
+        remove.setAttribute('aria-label', 'Remove ' + (tool ? toolDisplayName(installed) : installed.name));
         remove.addEventListener('click', () => select('', true));
         row.append(identity, remove);
         current.append(row);
@@ -1370,7 +1411,7 @@ function studioAttachments(data, modelInput) {
         const row = element('button', undefined, 'studio-attachment-choice');
         row.type = 'button';
         row.disabled = !tool && !compatible(item);
-        row.append(element('strong', item.name));
+        row.append(element('strong', tool ? toolDisplayName(item) : item.name));
         if (detail(item)) row.append(element('small', detail(item)));
         if (item.description) row.append(element('small', item.description));
         row.addEventListener('click', () => select(item.id));
