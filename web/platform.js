@@ -625,7 +625,7 @@ function renderModule(module, selectedTarget) {
         panels.push(nav);
       }
       if (section === 'studio') panels.push(studioWorkspace([agent], agent.id, showIdentity));
-      if (section === 'publish') panels.push(...agentReleasePanels(agent.id));
+      if (section === 'publish') panels.push(...agentReleasePanels(agent.id, selectedTarget.manageVersions));
       if (section === 'evaluations') panels.push(...agentEvaluationPanels(agent.id));
       if (section === 'integration') {
         const panel = listPanel('Connect your application', [externalIntegration(agent, true)]);
@@ -814,11 +814,11 @@ function openAgentUsage(agent) {
   openModal('Use Agent', [body]);
 }
 
-function agentReleasePanels(agentId) {
+function agentReleasePanels(agentId, manageVersions = false) {
   const agents = ofKind('agent').filter(agent => agent.source !== 'external' && (!agentId || agent.id === agentId));
   const versions = ofKind('agent_version').filter(version => !agentId || version.agent === agentId);
   const releases = ofKind('agent_release').filter(release => !agentId || release.agent === agentId);
-  const reload = () => openAgentDetail(agentId, 'publish');
+  const reload = () => loadModule('agent', {id:agentId, section:'publish', manageVersions:true});
   const agentField = field('agent', 'Agent', agents.map(agent => [agent.id, agent.name]));
   if (agentId) {
     agentField.querySelector('select').value = agentId;
@@ -853,7 +853,7 @@ function agentReleasePanels(agentId) {
     item.append(element('strong', name + ' · ' + release.environment),
       element('p', (version?.label ?? release.version) + ' · ' + timeLabel(release.at)));
     const request = {target_kind:'agent_release', target:release.agent, environment:release.environment, input:'Your message'};
-    item.append(expandable('Run via API', {endpoint:'POST /api/platform/runs', required_scope:'agents:run',
+    if (!agentId) item.append(expandable('Run via API', {endpoint:'POST /api/platform/runs', required_scope:'agents:run',
       ...(version?.provider === hostedProvider ? {hosted_model_scope:'models:invoke'} : {}), body:request}));
     if (!agentId) {
       const open = iconButton('deploy', 'Open Publish', 'button quiet');
@@ -887,7 +887,29 @@ function agentReleasePanels(agentId) {
     recordName(version.agent) + ' · ' + version.label, {id:version.id, model:version.model,
       max_tokens:version.max_tokens, instructions:version.instructions})));
   if (!agentId) return [deployments];
-  return [save, publish, deployments, history, channelPublishingPanel(agentId, active)];
+  const environments = listPanel('Environments', env.map(([id, label]) => {
+    const activeRelease = active.get(agentId + ':' + id);
+    const row = element('div', undefined, 'console-agent-row');
+    const identity = element('div');
+    identity.append(element('strong', label));
+    if (activeRelease) {
+      const version = byVersion.get(activeRelease.version);
+      identity.append(element('p', (version?.label ?? activeRelease.version) + ' · ' + timeLabel(activeRelease.at)));
+    }
+    row.append(identity, element('span', activeRelease ? 'Published' : 'Not published',
+      activeRelease ? 'pill success' : 'pill'));
+    return row;
+  }));
+  environments.classList.add('wide');
+  const management = element('details', undefined, 'panel module-panel wide publish-management');
+  management.open = manageVersions;
+  const summary = element('summary');
+  summary.append(element('strong', 'Manage versions'),
+    element('small', versions.length === 1 ? '1 saved version' : versions.length + ' saved versions'));
+  const content = element('div', undefined, 'module-grid');
+  content.append(save, publish, history, deployments);
+  management.append(summary, content);
+  return [channelPublishingPanel(agentId, active), environments, management];
 }
 
 function openHostedWeCom(agentId, environments) {
@@ -938,17 +960,17 @@ function openHostedWeCom(agentId, environments) {
 
 function channelPublishingPanel(agentId, releases) {
   const channels = [
-    {name:'企业微信智能机器人', mode:'wecom', transport:'WebSocket · Bot ID + Secret'},
-    {name:'微信客服', mode:'wechat-kf', transport:'HTTPS · 加密回调'}
+    {name:'企业微信智能机器人', mode:'wecom', description:'Agent Deck 托管 · 填写 Bot ID 和 Secret 即可连接'},
+    {name:'微信客服', mode:'wechat-kf', description:'自托管网关 · 需要 HTTPS 回调'}
   ];
-  const panel = listPanel('WeChat channels', [element('p',
-    'Connect a published Agent to WeCom or WeChat Customer Service.')]);
+  const panel = listPanel('Connect a channel', []);
+  panel.querySelector('p')?.remove();
   panel.classList.add('wide');
   for (const channel of channels) {
     const row = element('div', undefined, 'console-agent-row');
     const info = element('div');
-    info.append(element('strong', channel.name), element('p', channel.transport));
-    const setup = iconButton('external', 'Set up', 'button');
+    info.append(element('strong', channel.name), element('p', channel.description));
+    const setup = iconButton('external', 'Set up', channel.mode === 'wecom' ? 'button primary' : 'button');
     const environments = ['production', 'staging'].filter(env => releases.has(agentId + ':' + env));
     setup.setAttribute('aria-label', 'Set up ' + channel.name);
     function continueSetup(environments) {
@@ -969,7 +991,7 @@ function channelPublishingPanel(agentId, releases) {
       guide.href = 'https://github.com/choasup/agentops/tree/main/channels';
       guide.target = '_blank';
       guide.rel = 'noopener noreferrer';
-      openModal(channel.name, [element('p', channel.transport), choice,
+      openModal(channel.name, [element('p', channel.description), choice,
         element('p', 'Set the channel credentials and Agent Deck API key on your server, then start the gateway.'),
         command, guide]);
     }

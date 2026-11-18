@@ -654,3 +654,8 @@ dialog::backdrop {background: #111a3a70}
 .agent-api-example-controls {justify-content:space-between}
 .agent-api-example-controls [aria-pressed="true"] {background:var(--accent-soft); color:var(--accent-dark)}
 .agent-api-command {max-height:36dvh; overflow:auto}
+
+.publish-management > summary {cursor:pointer}
+.publish-management > summary small {margin-inline-start:10px; color:var(--muted)}
+.publish-management > .module-grid {margin-top:14px}
+.publish-management .module-panel {box-shadow:none}
