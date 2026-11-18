@@ -387,6 +387,48 @@ const readWeComPosts = '读取近期帖子';
 const isWeComChannel = item => item.provider === 'wecom-channel';
 const toolDisplayName = item => isWeComChannel(item) ? 'WeCom · ' + item.name : item.name;
 
+function openWeComTrigger(provider, channel) {
+  const trigger = ofKind('wecom_trigger').find(item => item.connection === channel.id && !item.disabled);
+  const back = element('button', 'Back to WeCom', 'button quiet');
+  back.addEventListener('click', () => openWeComConnector(provider));
+  async function change(action, data) {
+    await platformRequest('/wecom-trigger-' + action, {...data, connection:channel.id});
+    await loadModule('connections');
+    openWeComConnector(provider);
+  }
+  if (trigger) {
+    const current = element('p', recordName(trigger.agent) + ' · ' + trigger.environment +
+      (trigger.marker ? ' · Matching posts only' : ' · All new posts'));
+    openModal(channel.name + ' · New post trigger', [current,
+      formPanel('Active trigger', [], 'Disable trigger', () => change('disable', {})), back]);
+    return;
+  }
+  const releases = ofKind('agent_release').filter(release => {
+    const version = ofKind('agent_version').find(item => item.id === release.version);
+    return version?.provider === hostedProvider && !version.mcp_connection;
+  });
+  if (!releases.length) {
+    openModal(channel.name + ' · New post trigger', [
+      element('p', 'Publish an Agent using Hosted DeepSeek without an attached tool to enable this trigger.'), back]);
+    return;
+  }
+  const target = field('release', 'Published Agent', releases.map(item =>
+    [item.id, recordName(item.agent) + ' · ' + item.environment]));
+  if (releases.length === 1) target.querySelector('select').value = releases[0].id;
+  const marker = field('marker', 'Only posts containing (optional)');
+  marker.querySelector('input').required = false;
+  marker.querySelector('input').maxLength = 80;
+  openModal(channel.name + ' · New post trigger', [
+    formPanel('When someone creates a post', [target, marker,
+      element('p', 'Matching new posts run the selected Agent without an @mention. The post text is sent to Hosted DeepSeek, uses workspace balance, and appears in Console Traces.')
+    ], 'Enable trigger', async data => {
+      const release = releases.find(item => item.id === data.release);
+      if (!release) throw new Error('Select a published Agent');
+      await change('enable', {agent:release.agent, environment:release.environment, marker:data.marker});
+    }), back
+  ]);
+}
+
 function openWeComConnector(provider) {
   const channels = ofKind('mcp_connection').filter(item => isWeComChannel(item) && !item.revoked);
   const add = iconButton('plus', 'Add channel', 'button primary');
@@ -407,7 +449,13 @@ function openWeComConnector(provider) {
           openWeComConnector(provider);
         })
     ]));
-    row.append(text, remove);
+    const enabled = ofKind('wecom_trigger').some(item => item.connection === channel.id && !item.disabled);
+    const trigger = element('button', enabled ? 'Trigger enabled' : 'Set up trigger', 'button');
+    trigger.setAttribute('aria-label', (enabled ? 'Manage trigger for ' : 'Set up trigger for ') + channel.name);
+    trigger.addEventListener('click', () => openWeComTrigger(provider, channel));
+    const actions = element('div', undefined, 'section-actions');
+    actions.append(trigger, remove);
+    row.append(text, actions);
     return row;
   }) : [element('p', 'Add a channel to grant read access.')]);
   openModal('WeCom', [status, list, add]);

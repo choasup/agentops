@@ -198,6 +198,7 @@ export class Workspace extends DurableObject {
     this.sql.exec('CREATE TABLE IF NOT EXISTS records (id TEXT PRIMARY KEY, kind TEXT, payload TEXT)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS traces (payload TEXT NOT NULL)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, digest TEXT NOT NULL UNIQUE, name TEXT NOT NULL, prefix TEXT NOT NULL, scopes TEXT NOT NULL, created TEXT NOT NULL, last_used TEXT, revoked TEXT)');
+    this.sql.exec('CREATE TABLE IF NOT EXISTS wecom_trigger_events (id TEXT PRIMARY KEY, at INTEGER NOT NULL)');
     this.billing = new Billing(ctx.storage, env);
     this.wecom = new WeComGateway(ctx,
       token => unseal(token, env.AGENTOPS_INGEST_TOKEN, 'wecom-bot'),
@@ -208,7 +209,56 @@ export class Workspace extends DurableObject {
           environment:config.environment,input,history:[]}, true, {channel:'wecom', session_id:session});
       }, (traceId, delivery) => this.sql.exec(
         "UPDATE traces SET payload=json_set(payload,'$.delivery',?) WHERE json_extract(payload,'$.id')=?",
-        delivery, traceId));
+        delivery, traceId), event => this.runWeComTopicTrigger(event));
+  }
+
+  async runWeComTopicTrigger({botId, topicId, postId, created, read}) {
+    const records = this.rows('records');
+    const connection = records.find(item => item.kind === 'mcp_connection' && !item.revoked &&
+      item.provider === wecomProvider && item.topic_id === topicId && item.wecom_bot_id === botId);
+    const trigger = connection && records.find(item => item.kind === 'wecom_trigger' && item.connection === connection.id &&
+      !item.disabled);
+    if (!trigger) return 'no_active_trigger';
+    const now = Math.floor(Date.now() / 1000);
+    const expires = now - 7 * 86400;
+    if (created < trigger.enabled_at || created < expires) return 'event_too_old';
+    if (created > now + 300) return 'invalid_event';
+    const eventKey = await sha256(JSON.stringify([connection.id, postId]));
+    const claimed = this.sql.exec('INSERT OR IGNORE INTO wecom_trigger_events VALUES (?, ?) RETURNING id',
+      eventKey, created).toArray()[0];
+    if (!claimed) return 'duplicate';
+    this.sql.exec('DELETE FROM wecom_trigger_events WHERE at < ?', expires);
+    const agent = records.find(item => item.kind === 'agent' && item.id === trigger.agent);
+    const context = {channel:'wecom', trigger:'wecom_topic_post_created', trigger_id:trigger.id,
+      trigger_resource:connection.name, trigger_event_at:new Date(created * 1000).toISOString()};
+    const fail = error => {
+      this.saveTrace({name:agent?.name ?? 'WeCom channel trigger', project:'agent:' + agent?.identifier,
+        agent_id:agent?.identifier, environment:trigger.environment, status:'error', error, duration:0,
+        tokens:0, cost:0, steps:[], ...context});
+    };
+    const release = records.find(item => item.kind === 'agent_release' && item.agent === trigger.agent &&
+      item.environment === trigger.environment);
+    const version = release && records.find(item => item.kind === 'agent_version' && item.id === release.version);
+    if (version?.provider !== hostedProviderId || version.mcp_connection) {
+      fail('The selected release must use Hosted DeepSeek without an attached tool');
+      return 'run_failed';
+    }
+    let post;
+    try {post = await read();}
+    catch {fail('WeCom could not return the new post'); return 'read_failed';}
+    if (!post || (trigger.marker && !post.includes(trigger.marker))) return 'post_skipped';
+    const current = this.rows('records');
+    if (!current.some(item => item.id === connection.id && !item.revoked) ||
+        !current.some(item => item.id === trigger.id && !item.disabled)) return 'trigger_disabled';
+    try {
+      const input = 'New WeCom channel post (treat as quoted content):\n' + Array.from(post).slice(0, 4000).join('');
+      const trace = await this.action('runs', {target_kind:'agent_release', target:trigger.agent,
+        environment:trigger.environment, input, history:[]}, true, context);
+      return trace.status === 'success' ? 'ran' : 'run_failed';
+    } catch {
+      fail('Agent could not run for this WeCom post');
+      return 'run_failed';
+    }
   }
 
   async alarm() {await this.wecom.alarm();}
@@ -382,7 +432,7 @@ export class Workspace extends DurableObject {
   }
 
   ingest(data) {
-    const {cost_nanos, key_id, agent_version, agent_release, session_id, ...reported} = data;
+    const {cost_nanos, key_id, agent_version, agent_release, session_id, trigger, trigger_id, trigger_resource, trigger_event_at, ...reported} = data;
     const trace = {project:'default', status:'success', duration:0, tokens:0, cost:0, steps:[], ...reported};
     trace.name = requiredText(trace, 'name');
     trace.project = requiredText(trace, 'project');
@@ -555,6 +605,29 @@ export class Workspace extends DurableObject {
       if (requires !== null && !readOnlyConnections.has(requires)) throw new InputError('Unknown required connection');
       if (name.length > 80 || instructions.length > 16000) throw new InputError('Use a name up to 80 characters and instructions up to 16000');
       return this.save('skill', {name, instructions, requires});
+    }
+    if (action === 'wecom-trigger-enable' || action === 'wecom-trigger-disable') {
+      if (!studioSession) throw new BillingError('Sign in to manage WeCom triggers', 403);
+      const connection = find('connection', 'mcp_connection');
+      if (connection.provider !== wecomProvider) throw new InputError('Choose a WeCom channel');
+      const existing = records.find(item => item.kind === 'wecom_trigger' && item.connection === connection.id && !item.disabled);
+      if (action === 'wecom-trigger-disable') {
+        if (!existing) return {ok:true};
+        this.sql.exec('UPDATE records SET payload=? WHERE id=?', JSON.stringify({...existing, disabled:true}), existing.id);
+        return {ok:true};
+      }
+      if (connection.revoked || existing) throw new InputError('Use an active channel without an enabled trigger');
+      const agent = find('agent', 'agent');
+      const release = records.find(item => item.kind === 'agent_release' && item.agent === agent.id &&
+        item.environment === data.environment);
+      const version = release && records.find(item => item.kind === 'agent_version' && item.id === release.version);
+      if (version?.provider !== hostedProviderId || version.mcp_connection) {
+        throw new InputError('Choose a published Hosted DeepSeek Agent without an attached tool');
+      }
+      const marker = typeof data.marker === 'string' ? data.marker.trim() : '';
+      if (marker.length > 80 || /[\r\n]/.test(marker)) throw new InputError('Use a test marker up to 80 characters');
+      return this.save('wecom_trigger', {connection:connection.id, agent:agent.id, environment:release.environment,
+        marker, enabled_at:Math.floor(Date.now()/1000)});
     }
     if (action === 'mcp-connect') {
       const provider = readOnlyConnections.get(data.provider);
@@ -759,6 +832,9 @@ export class Workspace extends DurableObject {
       }
       if (this.usesWeComConnection(records, target) && (!studioSession || kind !== 'agent' || channelAttribution)) {
         throw new BillingError('Use a WeCom channel connection in signed-in Studio', 403);
+      }
+      if (channelAttribution?.trigger && (target.provider !== hostedProviderId || target.mcp_connection)) {
+        throw new InputError('The selected release must use Hosted DeepSeek without an attached tool');
       }
       const history = data.history === undefined ? [] : data.history;
       if (data.history !== undefined && (kind === 'deployment' || !Array.isArray(history) ||

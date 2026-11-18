@@ -5,11 +5,12 @@ const validTopicId = value => typeof value === 'string' && value.length > 0 &&
   new TextEncoder().encode(value).length <= 128;
 const messageTypes = new Set(['text', 'image', 'voice', 'video', 'file', 'mixed', 'markdown', 'location', 'link']);
 export class WeComGateway {
-  constructor(ctx, decrypt, run, recordDelivery) {
+  constructor(ctx, decrypt, run, recordDelivery, onNewPost) {
     this.ctx = ctx;
     this.decrypt = decrypt;
     this.run = run;
     this.recordDelivery = recordDelivery;
+    this.onNewPost = onNewPost;
     this.status = 'connecting';
     this.seen = new Map();
     this.pendingReplies = new Map();
@@ -147,6 +148,17 @@ export class WeComGateway {
   }
 
   async onTopicEvent(socket, config, body) {
+    if (body?.msgtype === 'event' && body.event?.eventtype === 'topic_event' &&
+        body.event.topic_event?.type === 1) {
+      const postId = body.event.topic_event.post_id;
+      if (this.status !== 'connected' || body.aibotid !== config.botId || !body.from?.userid ||
+          !validTopicId(body.topic_id) || !validTopicId(postId) || !Number.isInteger(body.create_time)) {
+        return this.diagnostic('topic_post_created', 'invalid_event');
+      }
+      const result = await this.onNewPost({botId:config.botId, topicId:body.topic_id, postId, created:body.create_time,
+        read:() => this.readCreatedPost(socket, body.topic_id, postId)});
+      return this.diagnostic('topic_post_created', result);
+    }
     if (body?.msgtype !== 'event' || body.event?.eventtype !== 'topic_at_bot') {
       return this.diagnostic('topic_event', 'ignored');
     }
@@ -187,6 +199,17 @@ export class WeComGateway {
   remember(key) {
     this.seen.set(key, true);
     if (this.seen.size > 2048) this.seen.delete(this.seen.keys().next().value);
+  }
+
+  async readCreatedPost(socket, topicId, postId) {
+    const frame = await this.request(socket, 'aibot_topic_get_post_list', 'topic_trigger_' + crypto.randomUUID(),
+      {topic_id:topicId, post_id_list:[postId]});
+    if (this.socket !== socket || frame.errcode !== 0 || !Array.isArray(frame.body?.post_list)) {
+      throw new Error('WeCom could not return the new post');
+    }
+    const post = frame.body.post_list.find(item => item?.post_id === postId);
+    if (!post || post.is_recalled || typeof post.content !== 'string') return '';
+    return post.content.trim();
   }
 
   async readTopicPosts(topicId, expectedBotId) {

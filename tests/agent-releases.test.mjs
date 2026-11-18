@@ -304,6 +304,13 @@ test('published Agent configuration is isolated by workspace and environment and
     const request = JSON.parse(raw);
     assert.equal(request.body.topic_id, 'fixture-topic');
     const mention = request.body.type === undefined;
+    if (request.headers.req_id.startsWith('topic_trigger_')) {
+      assert.equal(request.cmd, 'aibot_topic_get_post_list');
+      assert.deepEqual(request.body.post_id_list, ['new-post']);
+      queueMicrotask(() => gateway.onMessage(socket, bot, JSON.stringify({headers:request.headers, errcode:0,
+        body:{post_list:[{post_id:'new-post', content:'TRIGGER-42 a new post'}]}})));
+      return;
+    }
     if (mention) {
       mentionReads++;
       if (request.cmd === 'aibot_topic_get_reply_list') {
@@ -358,6 +365,27 @@ test('published Agent configuration is isolated by workspace and environment and
   assert.doesNotMatch(JSON.stringify(read), /private fixture/);
   const privateVersion = await create('agent-versions', {agent:connectedAgent.id,label:'Channel Studio'});
   assert.equal((await action('agent-releases', {version:privateVersion.id,environment:'staging'})).status,400);
+  const trigger = await create('wecom-trigger-enable', {connection:channel.id, agent:agent.id,
+    environment:'staging', marker:'TRIGGER-42'});
+  const postEvent = (type, msgid) => JSON.stringify({cmd:'aibot_topic_event_callback',
+    headers:{req_id:'post-event-request'}, body:{msgid, msgtype:'event', aibotid:bot.botId, topic_id:'fixture-topic',
+      create_time:trigger.enabled_at, from:{userid:'fixture-user'},
+      event:{eventtype:'topic_event', topic_event:{type, post_id:'new-post'}}}});
+  const callsBeforeTrigger = modelCalls.length;
+  await gateway.onMessage(socket, bot, postEvent(2, 'post-updated'));
+  assert.equal(modelCalls.length, callsBeforeTrigger);
+  await gateway.onMessage(socket, bot, postEvent(1, 'post-created'));
+  await gateway.onMessage(socket, bot, postEvent(1, 'post-replayed'));
+  assert.equal(modelCalls.length, callsBeforeTrigger + 1);
+  const triggered = (await request('/api/traces')).data.find(item => item.trigger_id === trigger.id);
+  assert.equal(triggered.status, 'success');
+  assert.equal(triggered.trigger, 'wecom_topic_post_created');
+  assert.equal(triggered.trigger_resource, 'Fixture channel');
+  assert.match(triggered.input, /TRIGGER-42/);
+  assert.deepEqual(gateway.diagnostics.at(-1), {event:'topic_post_created', result:'duplicate'});
+  await create('wecom-trigger-disable', {connection:channel.id});
+  await gateway.onMessage(socket, bot, postEvent(1, 'post-after-disable'));
+  assert.deepEqual(gateway.diagnostics.at(-1), {event:'topic_post_created', result:'no_active_trigger'});
   await gateway.ctx.storage.put('wecom-bot', {...bot, botId:'other-bot'});
   assert.equal((await action('runs', channelRun)).status,502);
 });

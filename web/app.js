@@ -69,6 +69,7 @@ function showTrace(trace, linked = false) {
   metadata.append(statusPill(runStatus(trace)), element('span', latency(trace.duration), 'pill'),
     element('span', number.format(trace.tokens) + ' tokens', 'pill'));
   if (trace.channel === 'wecom') metadata.append(element('span', 'WeCom', 'pill'));
+  if (trace.trigger) metadata.append(element('span', 'New channel post', 'pill'));
   if (deliveryLabel(trace)) metadata.append(element('span', deliveryLabel(trace), 'pill'));
   if (trace.environment) metadata.append(element('span', trace.environment, 'pill'));
   if (typeof trace.cost_nanos === 'number') metadata.append(element('span', billingMoney(trace.cost_nanos), 'pill'));
@@ -134,6 +135,9 @@ function showTrace(trace, linked = false) {
       ['Connection ID', run.connection_id],
       ['Access', run.type === 'tool' && run.connection_id ? 'Read-only' : undefined],
       ['Resource scope', run.connection_scope],
+      ['Trigger', run.trigger === 'wecom_topic_post_created' ? 'WeCom · New channel post' : run.trigger],
+      ['Channel', run.trigger_resource],
+      ['Event time', run.trigger_event_at],
       ['Skill ID', run.skill_id],
       ['Version ID', run.agent_version],
       ['API Key ID', run.key_id],
@@ -358,7 +362,7 @@ function render() {
   const status = byId('status').value;
   const filtered = scope.filter(trace =>
     (!status || trace.status === status) &&
-    (!query || [trace.name, trace.project, trace.id, trace.channel, trace.session_id, JSON.stringify(trace.input), JSON.stringify(trace.error)]
+    (!query || [trace.name, trace.project, trace.id, trace.channel, trace.session_id, trace.trigger, trace.trigger_resource, JSON.stringify(trace.input), JSON.stringify(trace.error)]
       .some(value => value?.toLowerCase().includes(query)))
   );
   const sessions = view === 'traces' && traceMode === 'sessions';
@@ -380,7 +384,7 @@ function render() {
     if (typeof trace.input === 'string' && trace.input.trim()) {
       identity.append(element('small', trace.input.trim().slice(0, 140), 'trace-input-preview'));
     }
-    if (trace.channel === 'wecom') identity.append(element('span', 'WeCom', 'pill'));
+    if (trace.channel === 'wecom') identity.append(element('span', trace.trigger ? 'WeCom trigger' : 'WeCom', 'pill'));
     const values = [identity, traceScope(trace), trace.environment ?? '—', element('span', trace.status, 'pill ' + trace.status),
       latency(trace.duration), number.format(trace.tokens), typeof trace.cost_nanos === 'number' ? billingMoney(trace.cost_nanos) : money(trace.cost),
       new Date(trace.at).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})];
