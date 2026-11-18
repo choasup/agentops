@@ -734,7 +734,7 @@ function brandMark() {
 
 function agentFields(data, models) {
   const root = element('div', undefined, 'agent-form-fields');
-  const identity = element('div', undefined, 'agent-form-identity');
+  const identity = element('div', undefined, 'studio-config-group');
   const name = field('name', 'Agent name', 'text', data.name ?? '');
   const description = field('description', 'Description', 'text', data.description ?? '');
   const descriptionInput = description.querySelector('input');
@@ -753,7 +753,7 @@ function agentFields(data, models) {
   starter.querySelector('input').required = false;
   starter.querySelector('input').maxLength = 1000;
   starter.querySelector('input').placeholder = 'An optional first message to try in Studio';
-  const advanced = element('details', undefined, 'connection-advanced');
+  const advanced = element('details', undefined, 'studio-config-section');
   const limit = field('max_tokens', 'Maximum output tokens', 'number', data.max_tokens ?? '');
   const limitInput = limit.querySelector('input');
   limitInput.required = false;
@@ -761,8 +761,13 @@ function agentFields(data, models) {
   limitInput.max = 4096;
   limitInput.placeholder = 'Model default';
   advanced.append(element('summary', 'Run settings'), limit);
-  advanced.open = data.max_tokens != null && data.max_tokens !== '';
-  root.append(identity, model, instructions, starter, advanced);
+  const profile = element('details', undefined, 'studio-config-section');
+  identity.append(starter);
+  profile.append(element('summary', 'Agent details'), identity);
+  const capabilities = element('details', undefined, 'studio-config-section');
+  const tools = element('div', undefined, 'studio-config-group');
+  capabilities.append(element('summary', 'Tools and Skills'), tools);
+  root.append(model, instructions, capabilities, profile, advanced);
   const connections = ofKind('mcp_connection').filter(item => !item.revoked || item.id === data.mcp_connection);
   if (connections.length) {
     const tool = field('mcp_connection', 'Read-only tool', connections.map(item =>
@@ -783,7 +788,7 @@ function agentFields(data, models) {
     modelInput.addEventListener('change', showTool);
     toolInput.addEventListener('change', showTool);
     showTool();
-    root.append(tool, note);
+    tools.append(tool, note);
   }
   const skills = ofKind('skill');
   if (skills.length) {
@@ -806,8 +811,13 @@ function agentFields(data, models) {
     modelInput.addEventListener('change', showSkills);
     toolInput?.addEventListener('change', showSkills);
     showSkills();
-    root.append(skill);
+    tools.append(skill);
   }
+  const showCapabilities = () => {
+    capabilities.hidden = modelInput.value !== hostedProvider || (!connections.length && !skills.length);
+  };
+  modelInput.addEventListener('change', showCapabilities);
+  showCapabilities();
   return root;
 }
 
@@ -938,7 +948,7 @@ function externalIntegration(agent, inline = false) {
   openModal('Connect ' + agent.name, [panel]);
 }
 
-function agentConfigurationPanel(agent, afterSave) {
+function openAgentConfiguration(agent, afterSave) {
   const choices = studioModels();
   if (agent.provider && !choices.some(([id]) => id === agent.provider)) choices.unshift([agent.provider, recordName(agent.provider)]);
   if (!agent.provider && choices.length) choices.unshift(['', 'Workspace default']);
@@ -948,10 +958,36 @@ function agentConfigurationPanel(agent, afterSave) {
     providerInput.required = false;
     if (choices.length) providerInput.remove(0);
   }
-  return formPanel('Agent configuration', [fields], 'Save changes', async data => {
-    const updated = await platformRequest('/agent-update', {...agentPayload(data), agent:agent.id});
-    afterSave(updated);
+  const dialog = byId('studio-configuration');
+  const close = dialog.querySelector('.modal-head button');
+  const blockEscape = event => event.preventDefault();
+  const panel = formPanel(agent.name, [fields], 'Save changes', async data => {
+    close.disabled = cancel.disabled = true;
+    dialog.addEventListener('cancel', blockEscape);
+    try {
+      const updated = await platformRequest('/agent-update', {...agentPayload(data), agent:agent.id});
+      dialog.close();
+      afterSave(updated);
+    } finally {
+      close.disabled = cancel.disabled = false;
+      dialog.removeEventListener('cancel', blockEscape);
+    }
   });
+  const form = panel.querySelector('form');
+  const cancel = element('button', 'Cancel', 'button');
+  cancel.type = 'button';
+  cancel.addEventListener('click', () => dialog.close());
+  const footer = element('div', undefined, 'studio-config-footer');
+  const actions = element('div', undefined, 'section-actions');
+  actions.append(cancel, form.querySelector('[type=submit]'));
+  footer.append(form.querySelector('[role=status]'), actions);
+  form.append(footer);
+  form.addEventListener('invalid', event => {
+    const disclosure = event.target.closest('details');
+    if (disclosure) disclosure.open = true;
+  }, true);
+  byId('studio-config-body').replaceChildren(panel);
+  dialog.showModal();
 }
 
 function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
@@ -974,11 +1010,7 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
   if (!targetInput.value) targetInput.value = targets[0].id;
   const model = element('span', undefined, 'studio-model');
   const configure = iconButton('settings', 'Configure', 'button');
-  const editor = element('div', undefined, 'studio-config');
-  editor.id = 'studio-config';
-  editor.hidden = true;
-  configure.setAttribute('aria-controls', editor.id);
-  configure.setAttribute('aria-expanded', 'false');
+  configure.setAttribute('aria-haspopup', 'dialog');
   toolbar.append(selector, model, configure);
 
   const split = element('div', undefined, 'studio-split');
@@ -1009,7 +1041,7 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
   form.append(messageLabel, message, hint, formFooter, notice);
   stage.append(form, session);
   split.append(stage, history);
-  panel.append(toolbar, editor, split);
+  panel.append(toolbar, split);
 
   let pending = false;
   let selectedRun;
@@ -1021,7 +1053,7 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
     notice.classList.toggle('is-error', error);
   };
   const updateRunButton = () => {
-    send.disabled = pending || !editor.hidden || !message.value.trim();
+    send.disabled = pending || !message.value.trim();
     configure.disabled = pending;
     send.querySelector('span').textContent = pending ? 'Running…' : 'Run test';
   };
@@ -1044,8 +1076,6 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
       '';
     configure.hidden = target.kind === 'deployment';
     if (reset) {
-      editor.replaceChildren();
-      setEditorOpen(false);
       selectedRun = undefined;
       requestTrace = undefined;
       message.value = '';
@@ -1057,31 +1087,17 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
     draw();
   };
   targetInput.addEventListener('change', () => selectTarget());
-  function setEditorOpen(open) {
-    editor.hidden = !open;
-    configure.setAttribute('aria-expanded', String(open));
-    configure.querySelector('span').textContent = open ? 'Hide configuration' : 'Configure';
-    updateRunButton();
-  }
-
   configure.addEventListener('click', () => {
-    const target = current();
-    if (!editor.firstChild) {
-      editor.append(agentConfigurationPanel(target, updated => {
-        if (!panel.isConnected) return;
-        targets[targets.findIndex(item => item.id === updated.id)] = updated;
-        records = records.map(record => record.id === updated.id ? updated : record);
-        Array.from(targetInput.options).find(option => option.value === updated.id).textContent = updated.name;
-        if (current().id !== updated.id) return;
-        onAgentUpdate?.(updated);
-        editor.replaceChildren();
-        setEditorOpen(false);
-        selectTarget(false);
-        setNotice('Configuration saved.');
-        message.focus();
-      }));
-    }
-    setEditorOpen(editor.hidden);
+    openAgentConfiguration(current(), updated => {
+      if (!panel.isConnected) return;
+      targets[targets.findIndex(item => item.id === updated.id)] = updated;
+      records = records.map(record => record.id === updated.id ? updated : record);
+      Array.from(targetInput.options).find(option => option.value === updated.id).textContent = updated.name;
+      if (current().id !== updated.id) return;
+      onAgentUpdate?.(updated);
+      selectTarget(false);
+      setNotice('Configuration saved.');
+    });
   });
 
   function recentRuns() {

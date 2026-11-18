@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Deck</title>
 <link rel="icon" type="image/png" href="mark.png">
-<link rel="stylesheet" href="style.css?v=connector-access">
+<link rel="stylesheet" href="style.css?v=studio-drawer">
 <script src="app.js" defer></script>
-<script src="platform.js?v=connector-access" defer></script>
+<script src="platform.js?v=studio-drawer" defer></script>
 <script src="models.js" defer></script>
 <script src="selects.js" defer></script>
 <script src="account.js?v=account-popover" defer></script>
@@ -100,6 +100,13 @@
 <dialog id="modal" aria-labelledby="modal-title">
   <div class="modal-head"><h2 id="modal-title"></h2><form method="dialog"><button class="button icon-button" aria-label="Close"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#close"/></svg></button></form></div>
   <div id="modal-body"></div>
+</dialog>
+<dialog id="studio-configuration" class="studio-config-drawer" aria-labelledby="studio-config-title">
+  <div class="modal-head">
+    <h2 id="studio-config-title">Configure Agent</h2>
+    <form method="dialog"><button class="button icon-button" aria-label="Close configuration" autofocus><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#close"/></svg></button></form>
+  </div>
+  <div id="studio-config-body"></div>
 </dialog>
 <dialog id="trace-inspector" class="trace-inspector" aria-labelledby="trace-title">
   <div class="modal-head"><h2 id="trace-title"></h2><form method="dialog"><button class="button icon-button" aria-label="Close trace"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#close"/></svg></button></form></div>

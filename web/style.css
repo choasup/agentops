@@ -334,8 +334,22 @@ dialog::backdrop {background: #111a3a70}
 .studio-toolbar > label {display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--muted); font-size:12px; font-weight:650; min-width:0}
 .studio-toolbar select {min-height:32px; max-width:min(100%, 310px); padding-block:4px}
 .studio-toolbar .button {margin-left:auto; min-height:32px}
-.studio-config {padding:16px clamp(15px,3vw,32px); border-bottom:1px solid var(--border); background:var(--canvas)}
-.studio-config > .module-panel {max-width:760px; margin:0; box-shadow:none}
+.studio-config-drawer {inset:0 0 0 auto; margin:0; width:min(480px,100%); height:100dvh; max-height:none; border-radius:12px 0 0 12px; background:var(--surface)}
+.studio-config-drawer[open] {display:flex; flex-direction:column}
+.studio-config-drawer::backdrop {background:#16203b38}
+#studio-config-body, #studio-config-body > .module-panel, #studio-config-body .module-form {min-height:0; flex:1; display:flex; flex-direction:column}
+#studio-config-body > .module-panel {padding:0; border:0; box-shadow:none}
+#studio-config-body h2 {padding:16px 18px 0; overflow-wrap:anywhere}
+#studio-config-body .module-form {margin:0; gap:0}
+.studio-config-drawer .agent-form-fields {align-content:start; flex:1; min-height:0; overflow:auto; padding:14px 18px 18px}
+.studio-config-drawer textarea {min-height:140px}
+.studio-config-group {display:grid; gap:10px}
+.studio-config-section {border:1px solid var(--border); border-radius:8px; padding:8px 10px}
+.studio-config-section summary {cursor:pointer; font-weight:620}
+.studio-config-section[open] summary {margin-bottom:10px}
+.studio-config-footer {padding:12px 18px; border-top:1px solid var(--border)}
+.studio-config-footer .section-actions {justify-content:flex-end}
+.studio-config-footer [role="status"] {color:#8e2c43; margin-bottom:8px}
 .studio-model {border:1px solid var(--border); color:var(--muted); border-radius:6px; padding:3px 7px; font-size:11px; overflow-wrap:anywhere}
 .studio-split {display:grid; grid-template-columns:minmax(0,1fr) minmax(170px, 24%)}
 .studio-history {padding:16px 10px; border-left:1px solid var(--border); min-width:0; background:#fbfcfe; border-radius:0 0 10px 0}
@@ -548,7 +562,6 @@ dialog::backdrop {background: #111a3a70}
 .balance-amount {margin-top:8px; font-size:24px; overflow-wrap:anywhere}
 
 .agent-form-fields {display:grid; gap:12px}
-.agent-form-identity {display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr)); gap:10px}
 .studio-stream > .button {align-self:start; margin-top:8px}
 #modal:has(.agent-builder) {width:min(600px,calc(100% - 24px))}
 .agent-builder {display:grid; gap:8px}
