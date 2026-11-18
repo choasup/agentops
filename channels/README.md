@@ -12,6 +12,9 @@
 
 ## 企业微信智能机器人
 
+推荐在 **Console → Agents → Releases → WeChat channels → 企业微信智能机器人** 选择环境，填写 Bot ID 和 Secret。由 Agent Deck 的 Cloudflare Durable Object 托管长连接，每个工作区可连接一个机器人。托管模型从工作区余额扣费，设置弹窗可查看连接状态和最近一条 Trace。下面是自托管的备选方式。
+
+
 在企业微信创建智能机器人，选择 API 模式中的长连接。把 Bot ID 和 Secret 配置为 `WECOM_BOT_ID`、`WECOM_BOT_SECRET`，启动 `node gateway.mjs wecom`。看到认证成功后，给机器人发一条测试消息。该进程需要常驻运行，主动连企业微信，无需回调域名。 [腾讯官方接入说明](https://intl.cloud.tencent.com/zh/document/product/1316/84454)
 
 ## 微信客服

@@ -881,13 +881,59 @@ function agentReleasePanels(agentId, section) {
   return [save, publish, deployments, history];
 }
 
+function openHostedWeCom(agentId, environments) {
+  const heading = element('div', undefined, 'wecom-setup');
+  const status = element('p', 'Checking connection…');
+  status.setAttribute('role', 'status');
+  const current = element('div', undefined, 'section-actions');
+  const refreshStatus = element('button', 'Refresh status', 'button quiet');
+  const disconnect = element('button', 'Disconnect bot', 'button quiet');
+  disconnect.hidden = true;
+  current.append(refreshStatus, disconnect);
+  heading.append(element('p', 'Cloudflare hosts this connection. Replies use the selected release and the workspace balance.'), status, current);
+  async function update(data) {
+    try {
+      const result = data ?? await platformRequest('/wecom-status');
+      status.textContent = (result.agent ? recordName(result.agent) + ' · ' + result.environment + ' · ' : '') +
+        result.status + (result.detail ? ' · ' + result.detail : '');
+      disconnect.hidden = !result.agent;
+      heading.querySelector('.wecom-trace')?.remove();
+      if (result.lastTrace) {
+        const trace = element('div', undefined, 'wecom-trace');
+        trace.append(element('span', 'Latest WeCom Trace '), traceLink(result.lastTrace));
+        heading.append(trace);
+      }
+    } catch (error) {status.textContent = error.message;}
+  }
+  refreshStatus.addEventListener('click', () => update());
+  disconnect.addEventListener('click', async () => {
+    disconnect.disabled = true;
+    try {await update(await platformRequest('/wecom-disconnect', {}));}
+    catch (error) {status.textContent = error.message;}
+    finally {disconnect.disabled = false;}
+  });
+  const environment = field('environment', 'Environment', environments.map(env =>
+    [env, env === 'production' ? 'Production' : 'Staging']));
+  environment.querySelector('select').value = environments[0];
+  const secret = field('secret', 'Bot Secret', 'password');
+  const secretInput = secret.querySelector('input');
+  secretInput.autocomplete = 'new-password';
+  const form = formPanel('Connect a bot', [element('p', 'Use a bot created in API mode with a long connection. Saving replaces the workspace’s current bot.'),
+    environment, field('bot_id', 'Bot ID'), secret], 'Save and connect', async data => {
+    await update(await platformRequest('/wecom-connect', {...data, agent:agentId}));
+    secretInput.value = '';
+  });
+  openModal('企业微信智能机器人', [heading, form]);
+  update();
+}
+
 function channelPublishingPanel(agentId, releases) {
   const channels = [
     {name:'企业微信智能机器人', mode:'wecom', transport:'WebSocket · Bot ID + Secret'},
     {name:'微信客服', mode:'wechat-kf', transport:'HTTPS · 加密回调'}
   ];
   const panel = listPanel('WeChat channels', [element('p',
-    'Connect a published Agent to WeCom or WeChat Customer Service using the gateway on your server.')]);
+    'Connect a published Agent to WeCom or WeChat Customer Service.')]);
   panel.classList.add('wide');
   for (const channel of channels) {
     const row = element('div', undefined, 'console-agent-row');
@@ -898,6 +944,7 @@ function channelPublishingPanel(agentId, releases) {
     setup.disabled = !environments.length;
     setup.setAttribute('aria-label', 'Set up ' + channel.name);
     setup.addEventListener('click', () => {
+      if (channel.mode === 'wecom') return openHostedWeCom(agentId, environments);
       const choice = field('environment', 'Environment', environments.map(env =>
         [env, env === 'production' ? 'Production' : 'Staging']));
       const select = choice.querySelector('select');

@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers';
+import { WeComGateway } from './wecom.mjs';
 import { builtinSkills, builtinSkillById } from './builtin-skills.mjs';
 import { Billing, BillingError, checkout, hostedModel, hostedProviderId, paymentWebhook } from './billing.mjs';
 import { docsConnection, searchDocs, verifyDocsConnection } from './mcp.mjs';
@@ -195,7 +196,13 @@ export class Workspace extends DurableObject {
     this.sql.exec('CREATE TABLE IF NOT EXISTS traces (payload TEXT NOT NULL)');
     this.sql.exec('CREATE TABLE IF NOT EXISTS api_keys (id TEXT PRIMARY KEY, digest TEXT NOT NULL UNIQUE, name TEXT NOT NULL, prefix TEXT NOT NULL, scopes TEXT NOT NULL, created TEXT NOT NULL, last_used TEXT, revoked TEXT)');
     this.billing = new Billing(ctx.storage, env);
+    this.wecom = new WeComGateway(ctx,
+      token => unseal(token, env.AGENTOPS_INGEST_TOKEN, 'wecom-bot'),
+      (config, input) => this.action('runs', {target_kind:'agent_release',target:config.agent,
+        environment:config.environment,input,history:[]}, true, 'wecom'));
   }
+
+  async alarm() {await this.wecom.alarm();}
 
   rows(table) {
     return this.sql.exec('SELECT payload FROM ' + table + ' ORDER BY rowid DESC')
@@ -415,7 +422,7 @@ export class Workspace extends DurableObject {
     }
   }
 
-  async action(action, data, studioSession = false) {
+  async action(action, data, studioSession = false, channel) {
     const records = this.rows('records');
     const find = (key, kind) => {
       const identifier = requiredText(data, key);
@@ -423,6 +430,22 @@ export class Workspace extends DurableObject {
       if (!record) throw new InputError(kind + ' was not found');
       return record;
     };
+    if (action === 'wecom-connect' || action === 'wecom-disconnect') {
+      if (!studioSession) throw new BillingError('Sign in to manage WeCom', 403);
+      if (action === 'wecom-disconnect') return this.wecom.configure(null);
+      const agent = find('agent', 'agent');
+      if (agent.source === 'external' || !releaseEnvironments.includes(data.environment) ||
+          !records.some(item => item.kind === 'agent_release' && item.agent === agent.id && item.environment === data.environment)) {
+        throw new InputError('Choose a published Agent environment');
+      }
+      const botId = requiredText(data, 'bot_id');
+      const secret = requiredText(data, 'secret');
+      if (botId.length > 256 || secret.length > 512 || !this.env.AGENTOPS_INGEST_TOKEN) {
+        throw new InputError('Could not save Bot ID and Secret');
+      }
+      return this.wecom.configure({agent:agent.id,environment:data.environment,botId,
+        secret:await seal(secret, this.env.AGENTOPS_INGEST_TOKEN, 'wecom-bot')});
+    }
     if (action === 'models' || action === 'models-update') {
       const existing = action === 'models-update' ? find('provider', 'model') : null;
       const name = requiredText(data, 'name');
@@ -663,6 +686,7 @@ export class Workspace extends DurableObject {
       const previousMessages = history.map(({role, content}) => ({role, content}));
       const attribution = release ? {environment:release.environment, agent_version:release.version,
         agent_release:release.id} : {environment:'local'};
+      if (channel) attribution.channel = channel;
       if (target.source === 'external') throw new InputError('External agents run in your application');
       if (target.provider === hostedProviderId) {
         if (typeof data.input !== 'string' || !data.input.trim()) throw new InputError('Enter a test message');
@@ -730,6 +754,10 @@ export class Workspace extends DurableObject {
           -SUM(nanos) AS spend_nanos FROM billing_ledger WHERE key_id IS NOT NULL GROUP BY key_id) usage
           ON usage.key_id=k.id ORDER BY k.created DESC`).toArray();
         return json(keys.map(key => ({...key, scopes:JSON.parse(key.scopes)})));
+      }
+      if (pathname === '/api/platform/wecom-status') {
+        if (request.headers.get('X-AgentOps-Studio-Session') !== '1') return json({error:'Please sign in'}, 403);
+        return json(await this.wecom.getStatus());
       }
       if (pathname === '/api/billing') return json(this.billing.summary());
       if (pathname === '/api/models') return json([
