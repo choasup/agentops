@@ -59,7 +59,9 @@ function statusPill(status) {
 
 function deliveryLabel(trace) {
   return {replied:'WeCom confirmed reply', fallback_replied:'WeCom confirmed fallback',
-    reply_failed:'WeCom reply failed'}[trace.delivery] ??
+    reply_failed:'WeCom reply failed', comment_sent:'WeCom confirmed comment',
+    comment_rejected:'WeCom rejected comment', comment_unconfirmed:'WeCom comment unconfirmed',
+    comment_not_sent:'WeCom comment not sent'}[trace.delivery] ??
     (trace.session_id && trace.channel === 'wecom' ? 'WeCom delivery unconfirmed' : '');
 }
 
@@ -444,7 +446,7 @@ function showWorkspaceArea(area) {
 document.querySelectorAll('[data-area-switch]').forEach(button => button.addEventListener('click', () => {
   const area = button.dataset.areaSwitch;
   if (area === workspaceArea) return;
-  if (area === 'home') loadModule('agents');
+  if (area === 'home') openCurrentAgent();
   else document.querySelector('.nav[data-view="overview"]').click();
 }));
 

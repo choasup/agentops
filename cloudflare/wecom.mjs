@@ -156,7 +156,8 @@ export class WeComGateway {
         return this.diagnostic('topic_post_created', 'invalid_event');
       }
       const result = await this.onNewPost({botId:config.botId, topicId:body.topic_id, postId, created:body.create_time,
-        read:() => this.readCreatedPost(socket, body.topic_id, postId)});
+        read:() => this.readCreatedPost(socket, body.topic_id, postId),
+        comment:content => this.commentOnPost(socket, body.topic_id, postId, content)});
       return this.diagnostic('topic_post_created', result);
     }
     if (body?.msgtype !== 'event' || body.event?.eventtype !== 'topic_at_bot') {
@@ -199,6 +200,20 @@ export class WeComGateway {
   remember(key) {
     this.seen.set(key, true);
     if (this.seen.size > 2048) this.seen.delete(this.seen.keys().next().value);
+  }
+
+  async commentOnPost(socket, topicId, postId, content) {
+    if (this.socket !== socket || this.status !== 'connected') return {state:'comment_not_sent'};
+    let frame;
+    try {
+      frame = await this.request(socket, 'aibot_topic_send_reply', 'topic_comment_' + crypto.randomUUID(),
+        {topic_id:topicId, post_id:postId, content});
+    } catch {
+      return {state:'comment_unconfirmed'};
+    }
+    if (frame.errcode !== 0) return {state:'comment_rejected', code:frame.errcode};
+    const replyId = frame.body?.reply_id;
+    return validTopicId(replyId) ? {state:'comment_sent', reply_id:replyId} : {state:'comment_unconfirmed'};
   }
 
   async readCreatedPost(socket, topicId, postId) {

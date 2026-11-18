@@ -323,11 +323,12 @@ async function boot() {
         return;
       }
     }
-    byId('workspace-label').textContent = accountStatus?.user ? 'Personal workspace' : 'Local workspace';
     byId('workspace-shell').hidden = false;
     byId('boot-screen').hidden = true;
     startTraceMonitoring();
-    await loadModule(new URL(location.href).searchParams.has('checkout') ? 'billing' : 'agents');
+    if (new URL(location.href).searchParams.has('checkout')) await loadModule('billing');
+    else if (accountStatus?.user) await openCurrentAgent();
+    else await loadModule('studio');
   } catch (error) {
     const retry = element('button', 'Retry', 'button primary');
     retry.addEventListener('click', boot, {once:true});

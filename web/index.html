@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Deck</title>
 <link rel="icon" type="image/png" href="mark.png">
-<link rel="stylesheet" href="style.css?v=wecom-triggers">
-<script src="app.js?v=wecom-triggers" defer></script>
-<script src="platform.js?v=wecom-triggers" defer></script>
+<link rel="stylesheet" href="style.css?v=gallery-chat">
+<script src="app.js?v=agent-first" defer></script>
+<script src="platform.js?v=agent-navigation" defer></script>
 <script src="models.js" defer></script>
 <script src="selects.js" defer></script>
-<script src="account.js?v=studio-navigation" defer></script>
+<script src="account.js?v=agent-first" defer></script>
 </head>
 <body>
 <section id="sign-in" class="sign-in" hidden>
@@ -41,10 +41,10 @@
     <button type="button" data-area-switch="home" aria-pressed="true">Home</button>
     <button type="button" data-area-switch="console" aria-pressed="false">Console</button>
   </div>
-  <nav id="workspace-nav" aria-label="Workspace">
+  <nav id="workspace-nav" aria-label="Navigation">
     <div data-area-nav="home">
-    <button class="nav" data-module="agents"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#agents"/></svg><span>All agents</span></button>
-    <button class="nav" data-module="studio"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#studio"/></svg><span>Studio</span></button>
+    <button class="nav" data-module="gallery"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#agents"/></svg><span>Gallery</span></button>
+    <button class="nav" data-module="current-agent"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#studio"/></svg><span>Current Agent</span></button>
     <button class="nav" data-module="skills" data-cloud hidden><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#prompt"/></svg><span>Skills</span></button>
     <button class="nav" data-module="connections" data-cloud hidden><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#external"/></svg><span>Connections</span></button>
     </div>
@@ -63,7 +63,6 @@
     <button class="nav" data-module="billing" data-cloud hidden><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#wallet"/></svg><span>Billing</span></button>
     </div>
   </nav>
-  <div class="sidebar-foot"><span class="status-dot"></span><span id="workspace-label">Workspace</span></div>
 </aside>
 <main>
   <header class="top">
@@ -100,13 +99,6 @@
 <dialog id="modal" aria-labelledby="modal-title">
   <div class="modal-head"><h2 id="modal-title"></h2><form method="dialog"><button class="button icon-button" aria-label="Close"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#close"/></svg></button></form></div>
   <div id="modal-body"></div>
-</dialog>
-<dialog id="studio-configuration" class="studio-config-drawer" aria-labelledby="studio-config-title">
-  <div class="modal-head">
-    <h2 id="studio-config-title">Configure Agent</h2>
-    <form method="dialog"><button class="button icon-button" aria-label="Close configuration" autofocus><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#close"/></svg></button></form>
-  </div>
-  <div id="studio-config-body"></div>
 </dialog>
 <dialog id="trace-inspector" class="trace-inspector" aria-labelledby="trace-title">
   <div class="modal-head"><h2 id="trace-title"></h2><form method="dialog"><button class="button icon-button" aria-label="Close trace"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#close"/></svg></button></form></div>

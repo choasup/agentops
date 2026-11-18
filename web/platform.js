@@ -2,7 +2,7 @@ const platformContent = byId('platform-content');
 const modules = {
   billing: ['Billing', 'Manage your balance, review usage, and access API keys.'],
   skills: ['Skills', 'Save reusable instructions that Agents can apply.'],
-  connections: ['Connections', 'Connect tools that your Agents can use.'],
+  connections: ['Connections', 'Explore available connectors and authorize resources such as WeCom channels.'],
   models: ['Models', 'Manage the model connections your agents run on.'],
   datasets: ['Datasets', 'Curate examples and reference outputs for evaluation.'],
   experiments: ['Experiments', 'Evaluate prompt versions against a dataset and compare scores.'],
@@ -12,8 +12,10 @@ const modules = {
   deployments: ['Deployments', 'Inspect the active versions in each environment.'],
   agent: ['Agent', ''],
   'console-agents': ['Agents', 'Evaluate and monitor your Agents.'],
-  agents: ['All agents', 'Find your agents, check recent activity, and manage integrations.'],
-  studio: ['Studio', 'Try a test message with a Studio agent or deployment.']
+  gallery: ['Gallery', 'Chat with published Agents and find their integrations.'],
+  'gallery-chat': ['Agent', ''],
+  agents: ['Gallery', 'Find drafts, published agents, and external integrations.'],
+  studio: ['Studio', 'Build, test, and publish Agents.']
 };
 let activeModule;
 let moduleRequest = 0;
@@ -305,7 +307,7 @@ function connectionIdentity(provider) {
   return identity;
 }
 
-function openWeComChannelConnection(provider) {
+function openWeComChannelConnection(provider, onAuthorized = () => loadModule('connections'), channelName = '') {
   const marker = 'AD-' + crypto.randomUUID().slice(0, 8).toUpperCase();
   const status = element('p', 'Checking the connected WeCom bot…');
   status.setAttribute('role', 'status');
@@ -328,18 +330,18 @@ function openWeComChannelConnection(provider) {
     }
   });
   instructions.append(copy);
-  const form = formPanel('Channel access', [status, instructions, field('name', 'Channel display name'), fallback,
-    element('p', 'Use in signed-in Studio. Up to five recent post excerpts are sent to Hosted DeepSeek and included in the Trace.')
-  ], 'Verify and connect', async data => {
+  const form = formPanel('Channel access', [status, instructions, field('name', 'Channel display name', 'text', channelName), fallback,
+    ...(channelName ? [element('p', 'After restoring access, set up a new trigger for the channel.')] : [])
+  ], 'Authorize channel', async data => {
     await platformRequest('/mcp-connect', {...data, provider:provider.id});
     byId('modal').close();
-    await loadModule('connections');
+    await onAuthorized();
   });
   const submit = form.querySelector('button[type="submit"]');
   const updateButton = () => {submit.disabled = !input.value.trim();};
   input.addEventListener('input', updateButton);
   updateButton();
-  openModal('Connect WeCom channel', [form]);
+  openModal('Authorize WeCom channel', [form]);
 
   const active = () => form.isConnected && byId('modal').open;
   async function waitForTopic() {
@@ -387,45 +389,46 @@ const readWeComPosts = '读取近期帖子';
 const isWeComChannel = item => item.provider === 'wecom-channel';
 const toolDisplayName = item => isWeComChannel(item) ? 'WeCom · ' + item.name : item.name;
 
-function openWeComTrigger(provider, channel) {
+function openWeComTrigger(agentId, channel, releases) {
   const trigger = ofKind('wecom_trigger').find(item => item.connection === channel.id && !item.disabled);
-  const back = element('button', 'Back to WeCom', 'button quiet');
-  back.addEventListener('click', () => openWeComConnector(provider));
+  if (trigger && trigger.agent !== agentId) return;
   async function change(action, data) {
     await platformRequest('/wecom-trigger-' + action, {...data, connection:channel.id});
-    await loadModule('connections');
-    openWeComConnector(provider);
+    byId('modal').close();
+    await openAgentDetail(agentId, 'publish');
   }
   if (trigger) {
     const current = element('p', recordName(trigger.agent) + ' · ' + trigger.environment +
-      (trigger.marker ? ' · Matching posts only' : ' · All new posts'));
+      (trigger.marker ? ' · Matching posts only' : ' · All new posts') +
+      (trigger.comment ? ' · Summarizes and comments on the original post' : ''));
     openModal(channel.name + ' · New post trigger', [current,
-      formPanel('Active trigger', [], 'Disable trigger', () => change('disable', {})), back]);
+      ...(channel.revoked ? [element('p', 'Paused because channel access was removed.')] : []),
+      formPanel('Trigger settings', [], 'Disable trigger', () => change('disable', {expected_trigger:trigger.id}))]);
     return;
   }
-  const releases = ofKind('agent_release').filter(release => {
-    const version = ofKind('agent_version').find(item => item.id === release.version);
-    return version?.provider === hostedProvider && !version.mcp_connection;
-  });
   if (!releases.length) {
     openModal(channel.name + ' · New post trigger', [
-      element('p', 'Publish an Agent using Hosted DeepSeek without an attached tool to enable this trigger.'), back]);
+      element('p', 'Publish a version of this Agent using Hosted DeepSeek without an attached tool to enable this trigger.')]);
     return;
   }
-  const target = field('release', 'Published Agent', releases.map(item =>
-    [item.id, recordName(item.agent) + ' · ' + item.environment]));
-  if (releases.length === 1) target.querySelector('select').value = releases[0].id;
+  const target = field('environment', 'Released environment', releases.map(item =>
+    [item.environment, item.environment === 'production' ? 'Production' : 'Staging']));
+  if (releases.length === 1) target.querySelector('select').value = releases[0].environment;
   const marker = field('marker', 'Only posts containing (optional)');
   marker.querySelector('input').required = false;
   marker.querySelector('input').maxLength = 80;
+  const comment = element('label', undefined, 'check-row');
+  const commentInput = element('input');
+  commentInput.type = 'checkbox';
+  commentInput.name = 'comment';
+  comment.append(commentInput, element('span', 'Summarize and comment on the original post'));
   openModal(channel.name + ' · New post trigger', [
-    formPanel('When someone creates a post', [target, marker,
-      element('p', 'Matching new posts run the selected Agent without an @mention. The post text is sent to Hosted DeepSeek, uses workspace balance, and appears in Console Traces.')
+    formPanel('When someone creates a post', [target, marker, comment,
+      element('p', 'Matching new posts run this Agent without an @mention. The post text is sent to Hosted DeepSeek, uses your account balance, and appears in Console Traces.')
     ], 'Enable trigger', async data => {
-      const release = releases.find(item => item.id === data.release);
-      if (!release) throw new Error('Select a published Agent');
-      await change('enable', {agent:release.agent, environment:release.environment, marker:data.marker});
-    }), back
+      await change('enable', {agent:agentId, environment:data.environment, marker:data.marker,
+        comment:data.comment === 'on'});
+    })
   ]);
 }
 
@@ -433,84 +436,49 @@ function openWeComConnector(provider) {
   const channels = ofKind('mcp_connection').filter(item => isWeComChannel(item) && !item.revoked);
   const add = iconButton('plus', 'Add channel', 'button primary');
   add.addEventListener('click', () => openWeComChannelConnection(provider));
-  const status = element('p', 'Checking WeCom bot…');
-  status.setAttribute('role', 'status');
-  const list = listPanel('Authorized channels', channels.length ? channels.map(channel => {
+  const list = listPanel('Available channels', channels.length ? channels.map(channel => {
     const row = element('div', undefined, 'studio-attachment-row');
     const text = element('div');
     text.append(element('strong', channel.name), element('small', readWeComPosts));
     const remove = element('button', 'Disconnect', 'button quiet');
     remove.setAttribute('aria-label', 'Disconnect ' + channel.name);
     remove.addEventListener('click', () => openModal('Disconnect ' + channel.name, [
-      formPanel('Remove channel access', [element('p', 'Agents using this channel will lose read access.')],
+      formPanel('Remove channel access', [element('p', 'Removing access stops Agent reads and triggers for this channel.')],
         'Disconnect channel', async () => {
           await platformRequest('/mcp-disconnect', {connection:channel.id});
           await loadModule('connections');
           openWeComConnector(provider);
         })
     ]));
-    const enabled = ofKind('wecom_trigger').some(item => item.connection === channel.id && !item.disabled);
-    const trigger = element('button', enabled ? 'Trigger enabled' : 'Set up trigger', 'button');
-    trigger.setAttribute('aria-label', (enabled ? 'Manage trigger for ' : 'Set up trigger for ') + channel.name);
-    trigger.addEventListener('click', () => openWeComTrigger(provider, channel));
-    const actions = element('div', undefined, 'section-actions');
-    actions.append(trigger, remove);
-    row.append(text, actions);
+    row.append(text, remove);
     return row;
   }) : [element('p', 'Add a channel to grant read access.')]);
-  openModal('WeCom', [status, list, add]);
-  platformRequest('/wecom-status').then(result => {
-    if (!status.isConnected) return;
-    status.textContent = result.status === 'connected'
-      ? 'Bot connected · ' + recordName(result.agent) + ' · ' + result.environment
-      : 'Bot ' + (wecomConnectionLabels[result.status] ?? result.status);
-  }).catch(error => {status.textContent = error.message;});
+  openModal('WeCom channel access', [
+    element('p', 'Choose channels in an Agent’s Configure panel to read posts, or in Publish to set up a new-post trigger.'),
+    list, add
+  ]);
 }
 
-function openConnectionReview(provider, disconnect = false) {
+function openConnectionReview(provider) {
   if (provider.id === 'wecom-channel') return openWeComConnector(provider);
-  const connection = activeConnection(provider);
-  const connected = Boolean(connection);
-  const name = disconnect ? 'Disconnect ' : connected ? '' : 'Connect ';
-  const details = [connectionIdentity(provider), element('p', provider.description),
-    element('code', provider.source), element('p', provider.access)];
-  if (connected && !disconnect) {
-    openModal(provider.name, [...details, element('p', 'Already connected to this workspace.')]);
-    return;
-  }
-  if (disconnect) details.push(element('p', 'Agents using this connection will need a different tool or a new connection.'));
-  const form = formPanel(disconnect ? 'Review disconnection' : 'Review access', details,
-    disconnect ? 'Disconnect' : 'Verify and connect', async data => {
-      if (disconnect) await platformRequest('/mcp-disconnect', {connection:connection.id});
-      else await platformRequest('/mcp-connect', {...data, provider:provider.id});
-      byId('modal').close();
-      await loadModule('connections');
-    });
-  openModal(name + provider.name, [form]);
+  openModal(provider.name, [connectionIdentity(provider), element('p', provider.description),
+    element('code', provider.source), element('p', 'No account authorization required. Add this tool in an Agent’s Configure panel.')]);
 }
 
 function connectionCard(provider) {
-  const connection = activeConnection(provider);
   const card = element('section', undefined, 'panel module-panel connection-card');
-  const state = element('span', connection ? 'Connected' : 'Available', connection ? 'pill success' : 'pill');
+  const wecom = provider.id === 'wecom-channel';
+  const status = wecom ? 'Channel access required' : 'Public access';
   const head = element('div', undefined, 'connection-card-head');
-  head.append(connectionIdentity(provider), state);
-  const action = iconButton(connection ? 'settings' : 'plus', connection ? 'Manage' : 'Connect', 'button');
-  action.setAttribute('aria-label', (connection ? 'Manage ' : 'Connect ') + provider.name);
-  action.addEventListener('click', () => {
-    if (provider.id === 'wecom-channel' || !connection) return openConnectionReview(provider);
-    const disconnect = iconButton('close', 'Disconnect', 'button');
-    disconnect.addEventListener('click', () => openConnectionReview(provider, true));
-    openModal(provider.name, [connectionIdentity(provider), element('p', provider.description),
-      element('p', provider.access), disconnect]);
-  });
+  head.append(connectionIdentity(provider), element('span', status, 'pill'));
+  const label = wecom ? 'Manage access' : 'Details';
+  const action = iconButton(wecom ? 'settings' : 'external', label, 'button');
+  action.setAttribute('aria-label', label + ' · ' + provider.name);
+  action.addEventListener('click', () => openConnectionReview(provider));
   const footer = element('div', undefined, 'connection-card-head');
   footer.append(element('span', provider.access, 'pill'), action);
-  const wecom = provider.id === 'wecom-channel';
-  const channelCount = wecom ? ofKind('mcp_connection').filter(item => isWeComChannel(item) && !item.revoked).length : 0;
-  card.append(head, element('h2', wecom ? provider.name : connection?.name ?? provider.name),
-    element('p', wecom && channelCount ? channelCount + (channelCount === 1 ? ' authorized channel' : ' authorized channels') :
-      provider.description), footer);
+  card.append(head, element('h2', provider.name),
+    element('p', provider.description), footer);
   return card;
 }
 
@@ -540,12 +508,12 @@ function openConnectionImport() {
     button.type = 'button';
     button.setAttribute('aria-label', provider.name);
     button.append(connectionIdentity(provider), element('span',
-      provider.id === 'cloudflare-docs' ? 'Docs MCP' : 'agentops README'));
+      provider.id === 'cloudflare-docs' ? 'Docs MCP' : provider.id === 'github-agentops' ? 'agentops README' : 'Channel access'));
     button.addEventListener('click', () => openConnectionReview(provider));
     actions.append(button);
   }
   shortcuts.append(actions);
-  openModal('Add by link or command', [form, shortcuts]);
+  openModal('Find by link or command', [form, shortcuts]);
 }
 
 function openSkillImport() {
@@ -626,7 +594,7 @@ function renderModule(module, selectedTarget) {
   }
 
   if (module === 'connections') {
-    const install = iconButton('terminal', 'Add by link or command', 'button');
+    const install = iconButton('terminal', 'Find by link or command', 'button');
     install.addEventListener('click', openConnectionImport);
     heading.append(install);
     panels.push(...connectionCatalogue.map(connectionCard));
@@ -788,7 +756,36 @@ function renderModule(module, selectedTarget) {
       expandable(record.name, {prompt: promptOptions().find(([id]) => id === record.prompt)?.[1], id:record.id}))));
   }
 
-  if (module === 'agents') panels.push(agentRegistry());
+  if (module === 'gallery' || module === 'agents') {
+    const navigation = element('nav', undefined, 'agent-detail-nav wide');
+    navigation.setAttribute('aria-label', 'Gallery views');
+    for (const [view, label] of [['gallery', 'Published'], ['agents', 'All agents']]) {
+      const tab = element('button', label, 'trace-tab');
+      if (view === module) tab.setAttribute('aria-current', 'page');
+      else tab.addEventListener('click', () => loadModule(view));
+      navigation.append(tab);
+    }
+    panels.push(navigation, ...(module === 'gallery' ? agentGallery() : [agentRegistry()]));
+  }
+
+  if (module === 'gallery-chat') {
+    const agent = ofKind('agent').find(item => item.id === selectedTarget?.id);
+    const back = iconButton('arrow', 'Switch Agent', 'button quiet');
+    back.addEventListener('click', () => loadModule('gallery'));
+    heading.append(back);
+    const releases = agent && galleryReleases(agent.id);
+    if (accountStatus?.user && releases?.size) {
+      headingText.replaceChildren(element('h1', agent.name));
+      if (agent.description) headingText.append(element('p', agent.description));
+      byId('crumb').textContent = agent.name;
+      panels.push(agentSections(agent.id, 'chat', agentHomeTabs(agent.id)),
+        publishedAgentChat(agent, releases, selectedTarget.environment));
+    } else {
+      const unavailable = listPanel('Agent unavailable', [element('p', 'Choose an active release in Gallery.')]);
+      unavailable.classList.add('wide');
+      panels.push(unavailable);
+    }
+  }
 
   if (module === 'console-agents' && !selectedTarget) {
     const agents = ofKind('agent').filter(agent => agent.source !== 'external');
@@ -812,15 +809,15 @@ function renderModule(module, selectedTarget) {
     const inConsole = module === 'console-agents';
     const agent = ofKind('agent').find(item => item.id === selectedTarget.id);
     if (!agent || (inConsole && (agent.source === 'external' || !accountStatus?.user))) {
-      const back = iconButton('arrow', inConsole ? 'Console agents' : 'All agents', 'button quiet');
-      back.addEventListener('click', () => loadModule(inConsole ? 'console-agents' : 'agents'));
+      const back = iconButton('arrow', inConsole ? 'Console agents' : 'Studio', 'button quiet');
+      back.addEventListener('click', () => loadModule(inConsole ? 'console-agents' : 'gallery'));
       panels.push(listPanel('Agent unavailable', [back]));
     } else {
       const external = agent.source === 'external';
       const tabs = inConsole ? [] : external ? [['integration', 'Integration'], ['activity', 'Activity']] :
-        accountStatus?.user ? [['studio', 'Studio'], ['publish', 'Publish']] : [];
-      const section = inConsole ? 'evaluations' : tabs.some(([id]) => id === selectedTarget.section)
-        ? selectedTarget.section : tabs[0]?.[0] ?? 'studio';
+        accountStatus?.user ? agentHomeTabs(agent.id) : [];
+      const section = inConsole ? 'evaluations' : !external && selectedTarget.section === 'configure' ? 'configure' : tabs.some(([id]) => id === selectedTarget.section)
+        ? selectedTarget.section : external ? 'integration' : accountStatus?.user ? 'configure' : 'studio';
       const showIdentity = updated => {
         headingText.replaceChildren(element('h1', updated.name));
         byId('crumb').textContent = updated.name;
@@ -828,34 +825,24 @@ function renderModule(module, selectedTarget) {
       };
       showIdentity(agent);
       const actions = element('div', undefined, 'section-actions');
-      const back = iconButton('arrow', inConsole ? 'Console agents' : 'All agents', 'button quiet setup-back');
-      back.addEventListener('click', () => loadModule(inConsole ? 'console-agents' : 'agents'));
+      const back = iconButton('arrow', inConsole ? 'Console agents' : 'Switch Agent', 'button quiet setup-back');
+      back.addEventListener('click', () => loadModule(inConsole ? 'console-agents' : 'gallery'));
       actions.append(back);
       if (!external && accountStatus?.user) {
-        const jump = iconButton(inConsole ? 'studio' : 'external', inConsole ? 'Open Studio' : 'Evaluations', 'button');
-        jump.addEventListener('click', () => openAgentDetail(agent.id, inConsole ? 'studio' : 'evaluations'));
-        const use = iconButton('terminal', 'Use Agent', 'button');
-        use.addEventListener('click', () => openAgentUsage(ofKind('agent').find(item => item.id === agent.id) ?? agent));
+        const jump = iconButton(inConsole ? 'studio' : 'external', inConsole ? 'Open Build' : 'Evaluations', 'button quiet');
+        jump.addEventListener('click', () => openAgentDetail(agent.id, inConsole ? 'configure' : 'evaluations'));
         actions.append(jump);
         if (inConsole) {
           const publish = iconButton('deploy', 'Open Publish', 'button');
           publish.addEventListener('click', () => openAgentDetail(agent.id, 'publish'));
           actions.append(publish);
-        } else actions.append(use);
+        }
       }
       heading.append(actions);
-      if (tabs.length) {
-        const nav = element('nav', undefined, 'agent-detail-nav wide');
-        nav.setAttribute('aria-label', 'Agent sections');
-        for (const [id, label] of tabs) {
-          const button = element('button', label, 'trace-tab');
-          if (id === section) button.setAttribute('aria-current', 'page');
-          else button.addEventListener('click', () => openAgentDetail(agent.id, id));
-          nav.append(button);
-        }
-        panels.push(nav);
-      }
-      if (section === 'studio') panels.push(studioWorkspace([agent], agent.id, showIdentity));
+      if (tabs.length) panels.push(agentSections(agent.id, section, tabs));
+      if (section === 'studio') panels.push(studioWorkspace([agent], agent.id, true));
+      if (section === 'configure') panels.push(accountStatus?.user
+        ? agentChatBuilder(agent, showIdentity) : agentConfigurationPage(agent, showIdentity));
       if (section === 'publish') panels.push(...agentReleasePanels(agent.id, selectedTarget.manageVersions));
       if (section === 'evaluations') panels.push(...agentEvaluationPanels(agent.id));
       if (section === 'integration') {
@@ -874,9 +861,19 @@ function renderModule(module, selectedTarget) {
   }
 
   if (module === 'studio') {
-    const targets = records.filter(record =>
-      record.kind === 'deployment' || (record.kind === 'agent' && record.source !== 'external'));
-    panels.push(studioWorkspace(targets, selectedTarget));
+    if (accountStatus?.user && studioModels().length) panels.push(agentChatBuilder());
+    else {
+      const manual = element('button', 'Other setup options', 'button quiet');
+      manual.addEventListener('click', openCreateAgent);
+      heading.append(manual);
+      panels.push(agentDraftComposer());
+    }
+    const deployments = ofKind('deployment');
+    if (deployments.length) {
+      const test = element('details', undefined, 'panel module-panel wide');
+      test.append(element('summary', 'Test a registered deployment'), studioWorkspace(deployments));
+      panels.push(test);
+    }
   }
 
   const grid = element('div', undefined, 'module-grid');
@@ -884,8 +881,53 @@ function renderModule(module, selectedTarget) {
   platformContent.replaceChildren(heading, grid);
 }
 
+let currentAgentId;
+const currentAgentKey = 'agent-deck:current-agent';
+
+async function openCurrentAgent() {
+  try {
+    const catalog = await platformRequest();
+    const agents = catalog.filter(item => item.kind === 'agent' && item.source !== 'external');
+    const releases = catalog.filter(item => item.kind === 'agent_release');
+    const versions = new Set(catalog.filter(item => item.kind === 'agent_version').map(item => item.id));
+    let remembered = currentAgentId;
+    try {remembered ??= sessionStorage.getItem(currentAgentKey);}
+    catch {}
+    const hasRelease = (agent, environment) => {
+      const release = releases.find(item => item.agent === agent.id && item.environment === environment);
+      return versions.has(release?.version);
+    };
+    const agent = agents.find(item => item.id === remembered) ?? agents.find(item => hasRelease(item, 'production')) ??
+      agents.find(item => hasRelease(item, 'staging')) ?? agents[0];
+    if (!agent) return loadModule('studio');
+    if (accountStatus?.user && ['production', 'staging'].some(environment => hasRelease(agent, environment))) {
+      return loadModule('gallery-chat', {id:agent.id});
+    }
+    return openAgentDetail(agent.id, 'configure');
+  } catch {
+    return loadModule('gallery');
+  }
+}
+
+function agentHomeTabs(agentId) {
+  return [...(galleryReleases(agentId).size ? [['chat', 'Chat']] : []),
+    ['configure', 'Build'], ['studio', 'Runs'], ['publish', 'Publish']];
+}
+
+function agentSections(agentId, current, tabs) {
+  const nav = element('nav', undefined, 'agent-detail-nav wide');
+  nav.setAttribute('aria-label', 'Agent sections');
+  for (const [id, label] of tabs) {
+    const button = element('button', label, 'trace-tab');
+    if (id === current) button.setAttribute('aria-current', 'page');
+    else button.addEventListener('click', () => openAgentDetail(agentId, id));
+    nav.append(button);
+  }
+  return nav;
+}
+
 function openAgentDetail(id, section) {
-  const module = section === 'evaluations' ? 'console-agents' : 'agent';
+  const module = section === 'evaluations' ? 'console-agents' : section === 'chat' ? 'gallery-chat' : 'agent';
   return loadModule(module, {id, section});
 }
 
@@ -947,8 +989,173 @@ function agentEvaluationPanels(agentId) {
   return [setup, report];
 }
 
-function openAgentUsage(agent) {
-  const options = [['draft', 'Draft · development']];
+function galleryReleases(agentId) {
+  const releases = ofKind('agent_release');
+  const versions = new Map(ofKind('agent_version').map(version => [version.id, version]));
+  const active = new Map();
+  for (const environment of ['production', 'staging']) {
+    const release = releases.find(item => item.agent === agentId && item.environment === environment);
+    const version = versions.get(release?.version);
+    if (version) active.set(environment, {release, version});
+  }
+  return active;
+}
+
+function agentGallery() {
+  const triggers = ofKind('wecom_trigger').filter(item => !item.disabled);
+  const channels = new Set(ofKind('mcp_connection').filter(item => !item.revoked).map(item => item.id));
+  const botStatus = accountStatus?.user ? platformRequest('/wecom-status').catch(() => null) : Promise.resolve(null);
+  const cards = [];
+  for (const agent of ofKind('agent')) {
+    const environments = galleryReleases(agent.id);
+    if (!environments.size) continue;
+    const card = element('article', undefined, 'panel module-panel gallery-card');
+    const badges = element('div', undefined, 'section-actions');
+    if (environments.has('production')) badges.append(element('span', 'Production', 'pill success'));
+    if (environments.has('staging')) badges.append(element('span', 'Staging · Test', 'pill'));
+    badges.append(element('span', 'API', 'pill'));
+    const hasTrigger = triggers.some(item => item.agent === agent.id &&
+      environments.has(item.environment) && channels.has(item.connection));
+    botStatus.then(bot => {
+      const direct = bot?.agent === agent.id && environments.has(bot.environment);
+      if (direct || hasTrigger) badges.append(element('span', direct
+        ? 'WeCom · ' + (bot.status === 'connected' ? 'Online' : 'Offline') : 'WeCom trigger', 'pill'));
+    });
+    const actions = element('div', undefined, 'section-actions');
+    const chat = element('button', 'Chat', 'button primary');
+    chat.setAttribute('aria-label', 'Chat with ' + agent.name);
+    chat.addEventListener('click', () => loadModule('gallery-chat', {id:agent.id}));
+    const use = element('button', 'Integrations', 'button quiet');
+    use.setAttribute('aria-label', 'Integrations for ' + agent.name);
+    use.addEventListener('click', () => openAgentUsage(agent, true));
+    actions.append(chat, use);
+    card.append(element('h2', agent.name));
+    if (agent.description) card.append(element('p', agent.description));
+    card.append(badges, actions);
+    cards.push(card);
+  }
+  if (cards.length) return cards;
+  const studio = element('button', 'Open Studio', 'button primary');
+  studio.addEventListener('click', () => loadModule('studio'));
+  const empty = listPanel('No published Agents', [element('p', 'Publish an Agent from Studio to add it to Gallery.'), studio]);
+  empty.classList.add('wide');
+  return [empty];
+}
+
+function recentChatMessages(turns) {
+  const history = turns.filter(turn => !turn.trace.error && typeof turn.trace.output === 'string')
+    .slice(-6).flatMap(turn => [{role:'user', content:turn.input}, {role:'assistant', content:turn.trace.output}]);
+  while (new TextEncoder().encode(JSON.stringify(history)).length > 20_000) history.splice(0, 2);
+  return history;
+}
+
+function appendChatTurn(conversation, input, trace) {
+  const reply = element('article', undefined, 'agent-chat-reply');
+  reply.append(element('p', trace.error ?? trace.output ?? 'No reply.'));
+  const link = traceLink(trace.id, 'View trace');
+  link.addEventListener('click', event => {
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    showTrace(trace);
+  });
+  reply.append(link);
+  conversation.append(element('p', input, 'agent-chat-user'), reply);
+}
+
+function publishedAgentChat(agent, releases, environment) {
+  const panel = element('section', undefined, 'agent-chat-builder wide');
+  const toolbar = element('div', undefined, 'agent-chat-heading published-chat-heading');
+  const target = field('environment', 'Release', Array.from(releases, ([environment, {version}]) =>
+    [environment, (environment === 'production' ? 'Production' : 'Staging · Test') + ' · ' + version.label]));
+  const select = target.querySelector('select');
+  select.value = releases.has(environment) ? environment : releases.keys().next().value;
+  const newChat = element('button', 'New conversation', 'button quiet');
+  const integrations = element('button', 'Integrations', 'button quiet');
+  integrations.addEventListener('click', () => openAgentUsage(agent, true));
+  const actions = element('div', undefined, 'section-actions');
+  actions.append(newChat, integrations);
+  toolbar.append(target, actions);
+  const conversation = element('div', undefined, 'agent-chat-conversation');
+  conversation.setAttribute('role', 'log');
+  conversation.setAttribute('aria-label', 'Conversation');
+  const form = element('form', undefined, 'agent-chat-composer');
+  const message = element('textarea');
+  message.rows = 3;
+  message.required = true;
+  message.placeholder = 'Message ' + agent.name + '…';
+  message.setAttribute('aria-label', 'Message');
+  const send = iconButton('arrow', 'Send', 'button primary agent-chat-send');
+  send.type = 'submit';
+  send.setAttribute('aria-label', 'Send');
+  const status = element('p', undefined, 'studio-run-notice');
+  status.setAttribute('role', 'status');
+  const controls = element('div', undefined, 'agent-chat-controls published-chat-controls');
+  controls.append(send);
+  form.append(message, controls, status);
+  panel.append(toolbar, conversation, form);
+
+  const turns = [];
+  let pending = false;
+  function update() {
+    send.disabled = pending || !message.value.trim();
+    select.disabled = pending || turns.length > 0;
+    syncSelect(select);
+    newChat.hidden = !turns.length;
+    newChat.disabled = pending;
+  }
+  newChat.addEventListener('click', () => {
+    turns.length = 0;
+    conversation.replaceChildren();
+    status.textContent = '';
+    message.value = '';
+    update();
+    message.focus();
+  });
+  message.addEventListener('input', update);
+  message.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      if (!send.disabled) form.requestSubmit();
+    }
+  });
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (send.disabled) return;
+    const input = message.value.trim();
+    const environment = select.value;
+    const {release} = releases.get(environment);
+    pending = true;
+    message.value = '';
+    status.textContent = '';
+    const question = element('p', input, 'agent-chat-user');
+    const waiting = element('p', 'Waiting for a reply…', 'agent-chat-pending');
+    conversation.append(question, waiting);
+    update();
+    message.focus();
+    try {
+      const trace = await platformRequest('/runs', {target_kind:'agent_release', target:agent.id,
+        environment, expected_release:release.id, surface:'gallery', input, history:recentChatMessages(turns)});
+      turns.push({input, trace});
+      question.remove();
+      waiting.remove();
+      appendChatTurn(conversation, input, trace);
+      conversation.lastElementChild.scrollIntoView({block:'nearest'});
+    } catch (error) {
+      question.remove();
+      waiting.remove();
+      if (!message.value) message.value = input;
+      status.textContent = error.message;
+    } finally {
+      pending = false;
+      update();
+    }
+  });
+  update();
+  return panel;
+}
+
+function openAgentUsage(agent, publishedOnly = false) {
+  const options = publishedOnly ? [] : [['draft', 'Draft · development']];
   const releases = new Map();
   for (const [id, label] of [['production', 'Production'], ['staging', 'Staging']]) {
     const release = ofKind('agent_release').find(item => item.agent === agent.id && item.environment === id);
@@ -958,6 +1165,7 @@ function openAgentUsage(agent) {
       options.unshift([id, label + ' · ' + version.label]);
     }
   }
+  if (!options.length) return;
   const target = field('api-target', 'Target', options);
   const select = target.querySelector('select');
   select.value = releases.has('production') ? 'production' : releases.has('staging') ? 'staging' : 'draft';
@@ -1050,7 +1258,22 @@ function openAgentUsage(agent) {
     target, detail, permission, examples, code,
     element('p', 'Set AGENT_DECK_API_KEY on your server. Read output for the reply and id for its Trace ID.'), actions);
   update();
-  openModal('Use Agent', [body]);
+  if (publishedOnly) {
+    const channel = element('p');
+    platformRequest('/wecom-status').then(result => {
+      if (result.agent === agent.id && releases.has(result.environment)) {
+        channel.textContent = 'WeCom bot · ' + result.environment + ' · ' +
+          (result.status === 'connected' ? 'Online' : 'Offline');
+      }
+    }).catch(() => {});
+    const triggers = ofKind('wecom_trigger').filter(item => item.agent === agent.id && !item.disabled && releases.has(item.environment));
+    for (const trigger of triggers) {
+      const resource = ofKind('mcp_connection').find(item => item.id === trigger.connection && !item.revoked);
+      if (resource) body.append(element('p', 'WeCom channel · ' + resource.name + ' · ' + trigger.environment));
+    }
+    body.append(channel);
+  }
+  openModal(publishedOnly ? 'Integrations' : 'Use Agent', [body]);
 }
 
 function agentReleasePanels(agentId, manageVersions = false) {
@@ -1100,6 +1323,22 @@ function agentReleasePanels(agentId, manageVersions = false) {
     const actions = element('div', undefined, 'section-actions');
     actions.append(element('span', activeRelease ? 'Published' : 'Not published',
       activeRelease ? 'pill success' : 'pill'));
+    if (id === 'staging') {
+      const publishDraft = element('button', activeRelease ? 'Update from draft' : 'Publish draft', 'button');
+      publishDraft.addEventListener('click', () => {
+        let savedVersion;
+        openAction(activeRelease ? 'Update Staging' : 'Publish to Staging', [
+          element('p', 'Save your current Agent configuration as a version and make it callable via the Staging API.')
+        ], 'Publish to Staging', async () => {
+          savedVersion ??= await platformRequest('/agent-versions', {agent:agentId,
+            label:new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC'});
+          const release = await platformRequest('/agent-releases', {version:savedVersion.id, environment:'staging',
+            ...(activeRelease ? {expected_release:activeRelease.id} : {only_if_unpublished:true})});
+          if (release.version !== savedVersion.id) throw new Error('Staging was published elsewhere. Refresh before updating it.');
+        });
+      });
+      actions.append(publishDraft);
+    }
     const previous = byVersion.get(activeRelease?.previous);
     if (previous) {
       const rollback = element('button', 'Roll back', 'button quiet');
@@ -1146,7 +1385,7 @@ function agentReleasePanels(agentId, manageVersions = false) {
     history.append(row);
   }
   management.append(summary, actions, history);
-  return [channelPublishingPanel(agentId, active), environments, management];
+  return [...channelPublishingPanels(agentId, active), environments, management];
 }
 
 const wecomConnectionLabels = {
@@ -1219,7 +1458,7 @@ function openHostedWeCom(agentId, environments, onStatus) {
     }
   });
   diagnostics.append(element('summary', 'Gateway diagnostics'), events, discovery, discoveryStatus, probe, probeResult);
-  heading.append(element('p', 'Cloudflare hosts this connection. Replies use the selected release and the workspace balance.'), status, current, diagnostics);
+  heading.append(element('p', 'Cloudflare hosts this connection. Replies use the selected release and your account balance.'), status, current, diagnostics);
   async function update(data) {
     try {
       const result = data ?? await platformRequest('/wecom-status');
@@ -1235,7 +1474,7 @@ function openHostedWeCom(agentId, environments, onStatus) {
         discoveryStatus.textContent = 'The test mention arrived without a channel topic ID.';
       }
       onStatus?.(result);
-      disconnect.hidden = !result.agent;
+      disconnect.hidden = result.agent !== agentId;
     } catch (error) {status.textContent = error.message;}
   }
   refreshStatus.addEventListener('click', () => update());
@@ -1251,7 +1490,7 @@ function openHostedWeCom(agentId, environments, onStatus) {
   const secret = field('secret', 'Bot Secret', 'password');
   const secretInput = secret.querySelector('input');
   secretInput.autocomplete = 'new-password';
-  const form = formPanel('Connect a bot', [element('p', 'Use a bot created in API mode with a long connection. Saving replaces the workspace’s current bot.'),
+  const form = formPanel('Connect a bot', [element('p', 'Use a bot created in API mode with a long connection. Saving replaces the bot currently connected to your account.'),
     environment, field('bot_id', 'Bot ID'), secret], 'Save and connect', async data => {
     await update(await platformRequest('/wecom-connect', {...data, agent:agentId}));
     secretInput.value = '';
@@ -1265,23 +1504,77 @@ function openHostedWeCom(agentId, environments, onStatus) {
   poll();
 }
 
-function channelPublishingPanel(agentId, releases) {
-  const channels = [
-    {name:'企业微信智能机器人', mode:'wecom', description:'Agent Deck 托管 · 填写 Bot ID 和 Secret 即可连接'},
-    {name:'微信客服', mode:'wechat-kf', description:'自托管网关 · 需要 HTTPS 回调'}
-  ];
-  const panel = listPanel('Connect a channel', []);
-  panel.querySelector('p')?.remove();
-  panel.classList.add('wide');
-  for (const channel of channels) {
+function wecomAgentTriggersPanel(agentId) {
+  const versions = ofKind('agent_version');
+  const releases = ofKind('agent_release').filter(release => {
+    if (release.agent !== agentId) return false;
+    const version = versions.find(item => item.id === release.version);
+    return version?.provider === hostedProvider && !version.mcp_connection;
+  });
+  const triggers = ofKind('wecom_trigger').filter(item => !item.disabled);
+  const channels = ofKind('mcp_connection').filter(item => isWeComChannel(item) &&
+    (!item.revoked || triggers.some(trigger => trigger.connection === item.id && trigger.agent === agentId)));
+  const provider = connectionCatalogue.find(item => item.id === 'wecom-channel');
+  const authorize = name => openWeComChannelConnection(provider, () => openAgentDetail(agentId, 'publish'), name);
+  const rows = channels.map(channel => {
+    const trigger = triggers.find(item => item.connection === channel.id);
+    const owned = trigger?.agent === agentId;
+    const release = owned && releases.find(item => item.environment === trigger.environment);
     const row = element('div', undefined, 'console-agent-row');
     const info = element('div');
-    info.append(element('strong', channel.name), element('p', channel.description));
-    const setup = iconButton('external', 'Set up', channel.mode === 'wecom' ? 'button primary' : 'button');
+    const status = channel.revoked ? 'Paused · Channel access removed' :
+      owned ? (release ? 'Enabled · ' : 'Needs compatible release · ') + trigger.environment :
+      trigger ? 'Used by ' + recordName(trigger.agent) : 'Trigger off';
+    info.append(element('strong', channel.name), element('p', status));
+    if (owned) info.append(element('small', (trigger.marker ? 'Matching posts only' : 'All new posts') +
+      (trigger.comment ? ' · Comments on original post' : '')));
+    row.append(info);
+    if (!trigger || owned) {
+      const actions = element('div', undefined, 'section-actions');
+      if (channel.revoked) {
+        const restore = element('button', 'Reauthorize', 'button');
+        restore.setAttribute('aria-label', 'Reauthorize · ' + channel.name);
+        restore.addEventListener('click', () => authorize(channel.name));
+        actions.append(restore);
+      }
+      const action = element('button', owned ? 'Manage trigger' : 'Set up trigger', 'button');
+      action.setAttribute('aria-label', action.textContent + ' · ' + channel.name);
+      action.addEventListener('click', () => openWeComTrigger(agentId, channel, releases));
+      actions.append(action);
+      row.append(actions);
+    }
+    return row;
+  });
+  const add = iconButton('plus', 'Authorize channel', 'button');
+  add.addEventListener('click', () => authorize(''));
+  const heading = element('div', undefined, 'wecom-channel-heading');
+  heading.append(element('h3', 'Channel triggers'), add);
+  const section = element('section', undefined, 'wecom-channel-triggers');
+  section.append(heading, ...(rows.length ? rows : [element('p', 'Authorize a channel to run this Agent on new posts.')]));
+  return section;
+}
+
+function channelPublishingPanels(agentId, releases) {
+  const channels = [
+    {name:'企业微信', mode:'wecom', description:'企微消息回复由 Agent Deck 托管。'},
+    {name:'微信客服', mode:'wechat-kf', description:'自托管网关 · 需要 HTTPS 回调'}
+  ];
+  return channels.map(channel => {
+    const panel = element('section', undefined, 'panel module-panel wide');
+    panel.append(element('h2', channel.name));
+    if (channel.mode === 'wecom') panel.classList.add('wecom-publishing');
+
+    const row = element('div', undefined, 'console-agent-row');
+    const info = element('div');
+    if (channel.mode === 'wecom') info.append(element('strong', '机器人连接'));
+    info.append(element('p', channel.description));
+    const setup = iconButton('settings', channel.mode === 'wecom' ? 'Connect bot' : 'Set up gateway', 'button');
     const connection = element('div', undefined, 'wecom-status');
     const onStatus = channel.mode === 'wecom' ? result => {
       renderWeComStatus(connection, result, agentId);
-      setup.querySelector('span').textContent = result.agent === agentId ? 'Manage' : 'Set up';
+      const label = result.agent === agentId ? 'Manage bot' : result.agent ? 'Change bot routing' : 'Connect bot';
+      setup.querySelector('span').textContent = label;
+      setup.setAttribute('aria-label', label);
     } : undefined;
     if (onStatus) {
       connection.textContent = '正在检查连接…';
@@ -1335,8 +1628,9 @@ function channelPublishingPanel(agentId, releases) {
     });
     row.append(info, setup);
     panel.append(row);
-  }
-  return panel;
+    if (channel.mode === 'wecom') panel.append(wecomAgentTriggersPanel(agentId));
+    return panel;
+  });
 }
 
 function brandMark() {
@@ -1367,23 +1661,32 @@ function agentFields(data, models) {
   starter.querySelector('input').required = false;
   starter.querySelector('input').maxLength = 1000;
   starter.querySelector('input').placeholder = 'An optional first message to try in Studio';
-  const advanced = element('details', undefined, 'studio-config-section');
+  const advanced = element('section', undefined, 'panel module-panel agent-config-section');
   const limit = field('max_tokens', 'Maximum output tokens', 'number', data.max_tokens ?? '');
   const limitInput = limit.querySelector('input');
   limitInput.required = false;
   limitInput.min = 1;
   limitInput.max = 4096;
   limitInput.placeholder = 'Model default';
-  advanced.append(element('summary', 'Run settings'), limit);
-  const profile = element('details', undefined, 'studio-config-section');
-  identity.append(starter);
-  profile.append(element('summary', 'Agent details'), identity);
-  root.append(model, instructions, studioAttachments(data, modelInput), profile, advanced);
+  advanced.append(element('h2', 'Run settings'), limit);
+  const profile = element('section', undefined, 'panel module-panel agent-config-section');
+  profile.append(element('h2', 'Agent details'), identity, starter);
+  const behavior = element('section', undefined, 'panel module-panel agent-config-section');
+  behavior.append(element('h2', 'Model and instructions'), model, instructions);
+  const column = element('div', undefined, 'agent-config-column');
+  column.append(behavior, profile, advanced);
+  root.append(column, studioAttachments(data, modelInput));
   return root;
 }
 
 function studioAttachments(data, modelInput) {
   const connections = ofKind('mcp_connection');
+  for (const provider of connectionCatalogue) {
+    if (provider.id !== 'wecom-channel' && !activeConnection(provider)) {
+      connections.push({id:provider.id, provider:provider.id, name:provider.name,
+        scope:provider.access, description:provider.description});
+    }
+  }
   const skills = ofKind('skill');
   const root = element('div', undefined, 'studio-attachments');
   const notice = element('p');
@@ -1398,7 +1701,8 @@ function studioAttachments(data, modelInput) {
     (connection.provider ?? 'cloudflare-docs') === skill.requires);
 
   const makeSection = (title, name, items, getId, choose, emptyText) => {
-    const section = element('section', undefined, 'studio-attachment-section');
+    const section = element('section', undefined, 'panel module-panel studio-attachment-section');
+    section.dataset.attachment = name;
     const heading = element('div', undefined, 'studio-attachment-heading');
     const input = element('input');
     input.type = 'hidden';
@@ -1424,7 +1728,7 @@ function studioAttachments(data, modelInput) {
       (remove ? add : current.querySelector('button') ?? add).focus();
     };
     const detail = item => {
-      if (tool) return item.revoked ? 'Disconnected' : isWeComChannel(item)
+      if (tool) return item.revoked ? 'Access removed' : isWeComChannel(item)
         ? readWeComPosts : item.scope ?? 'Read-only';
       if (item.builtin) return item.source + ' · Built-in';
       if (!item.requires) return '';
@@ -1435,6 +1739,7 @@ function studioAttachments(data, modelInput) {
       const id = getId();
       input.value = hosted() ? id : '';
       add.disabled = !hosted();
+      if (tool) add.querySelector('span').textContent = id ? 'Replace tool' : 'Add tool';
       add.setAttribute('aria-expanded', String(picker === name));
       list.hidden = picker !== name;
       current.replaceChildren();
@@ -1448,9 +1753,24 @@ function studioAttachments(data, modelInput) {
         remove.type = 'button';
         remove.setAttribute('aria-label', 'Remove ' + (tool ? toolDisplayName(installed) : installed.name));
         remove.addEventListener('click', () => select('', true));
-        row.append(identity, remove);
-        current.append(row);
-      } else current.append(element('p', tool ? 'No tool attached' : 'No Skill installed'));
+        if (tool) {
+          const details = element('details', undefined, 'agent-tool-details');
+          const provider = connectionCatalogue.find(item => item.id === (installed.provider ?? 'cloudflare-docs'));
+          const summary = element('summary', 'Tool details');
+          details.append(summary, element('p', installed.revoked
+            ? 'Access was removed. Choose an available resource to restore this tool.'
+            : installed.scope ?? provider?.description ?? 'Read-only access.'));
+          if (isWeComChannel(installed) && !installed.revoked) {
+            details.append(element('p', 'Reads recent posts before answering · Last 15 minutes · Up to 5 posts'));
+          }
+          details.append(remove);
+          row.append(identity);
+          current.append(row, details);
+        } else {
+          row.append(identity, remove);
+          current.append(row);
+        }
+      } else current.append(element('p', tool ? 'No connector enabled for this Agent' : 'No Skill installed'));
       list.replaceChildren();
       if (list.hidden) return;
       const choices = items.filter(item => item.id !== id && !item.revoked);
@@ -1467,14 +1787,14 @@ function studioAttachments(data, modelInput) {
       }
     }};
   };
-  const tools = makeSection('Tools', 'mcp_connection', connections, () => connectionId, id => {
+  const tools = makeSection('Connector tools', 'mcp_connection', connections, () => connectionId, id => {
     connectionId = id;
     const skill = skills.find(item => item.id === skillId);
     if (skill && !compatible(skill)) {
       skillId = '';
       notice.textContent = skill.name + ' was removed because it requires the previous tool.';
     }
-  }, 'No other connected tools. Add a connection from Home → Connections.');
+  }, 'No other tools available. Authorize WeCom channels in Home → Connections.');
   const installedSkills = makeSection('Skills', 'skill', skills, () => skillId, id => {
     skillId = id;
   }, 'No other Skills available. Import a ZIP from Home → Skills.');
@@ -1488,6 +1808,10 @@ function studioAttachments(data, modelInput) {
   }
   modelInput.addEventListener('change', () => {
     picker = undefined;
+    render();
+  });
+  root.addEventListener('openattachment', event => {
+    picker = hosted() ? event.detail : undefined;
     render();
   });
   root.append(compatibility, tools.section, installedSkills.section, notice);
@@ -1622,49 +1946,429 @@ function externalIntegration(agent, inline = false) {
   openModal('Connect ' + agent.name, [panel]);
 }
 
-function openAgentConfiguration(agent, afterSave) {
+async function resolveDraftTool(draft) {
+  const provider = connectionCatalogue.find(item => item.id === draft.mcp_connection && item.id !== 'wecom-channel');
+  if (!provider) return draft;
+  const connection = await platformRequest('/mcp-connect', {provider:provider.id});
+  if (!records.some(item => item.id === connection.id)) records.push(connection);
+  return {...draft, mcp_connection:connection.id};
+}
+
+function agentChatBuilder(agent, showIdentity) {
+  let saved = agent;
+  let busy = false;
+  let testedConfiguration;
+  let savedConfiguration;
+  let pendingInput;
+  const turns = [];
+  const root = element('section', undefined, 'agent-chat-builder wide');
+  const header = element('div', undefined, 'agent-chat-heading');
+  const publish = iconButton('deploy', 'Publish draft', 'button primary');
+  const save = element('button', 'Save draft', 'button quiet');
+  const reset = element('button', 'New conversation', 'button quiet');
+  const setup = element('button', 'Other setup options', 'button quiet');
+  const overflow = element('details', undefined, 'agent-chat-overflow');
+  const more = element('summary', '···', 'button quiet icon-button');
+  more.setAttribute('aria-label', 'More Studio actions');
+  const menu = element('div', undefined, 'agent-chat-overflow-items');
+  menu.append(save, reset, setup);
+  overflow.append(more, menu);
+  overflow.addEventListener('focusout', event => {
+    if (event.relatedTarget && !overflow.contains(event.relatedTarget)) overflow.open = false;
+  });
+  overflow.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && overflow.open) {
+      overflow.open = false;
+      more.focus();
+    }
+  });
+  setup.addEventListener('click', () => {
+    overflow.open = false;
+    openCreateAgent();
+  });
+  const actions = element('div', undefined, 'section-actions agent-chat-actions');
+  actions.append(publish, overflow);
+  const draftState = element('small', undefined, 'agent-chat-draft-state');
+  const identity = element('div', undefined, 'agent-chat-identity');
+  const conversation = element('div', undefined, 'agent-chat-conversation');
+  conversation.setAttribute('role', 'log');
+  conversation.setAttribute('aria-label', 'Test conversation');
+
+  const models = studioModels();
+  if (agent?.provider && !models.some(([id]) => id === agent.provider)) models.unshift([agent.provider, recordName(agent.provider)]);
+  const modelField = field('provider', 'Model', models);
+  const model = modelField.querySelector('select');
+  model.value = agent?.provider ?? models[0]?.[0] ?? '';
+  const name = field('name', 'Agent name', 'text', agent?.name ?? '');
+  const instructions = field('instructions', 'System prompt', 'textarea', agent?.instructions ?? '');
+  name.querySelector('input').required = false;
+  name.querySelector('input').placeholder = 'Untitled Agent';
+  instructions.querySelector('textarea').required = false;
+  instructions.querySelector('textarea').placeholder = 'Tell the Agent how it should respond.';
+  const settings = element('div', undefined, 'agent-chat-settings');
+  const done = element('button', 'Done', 'button');
+  done.type = 'button';
+  name.classList.add('agent-chat-name');
+  identity.append(name, draftState);
+  header.append(identity, actions);
+  settings.append(instructions, done);
+  const resources = studioAttachments(agent ?? {}, model);
+  const picker = element('div', undefined, 'agent-composer-picker');
+  const add = iconButton('plus', 'Add', 'button quiet agent-composer-add');
+  add.type = 'button';
+  add.setAttribute('aria-label', 'Add skills or connectors');
+  const prompt = iconButton('prompt', 'Prompt', 'button quiet');
+  prompt.type = 'button';
+  prompt.setAttribute('aria-expanded', 'false');
+  add.setAttribute('aria-expanded', 'false');
+  const flyout = element('div', undefined, 'agent-composer-flyout');
+  flyout.hidden = true;
+  const categories = element('div', undefined, 'agent-composer-categories');
+  const detail = element('div', undefined, 'agent-composer-detail');
+  detail.hidden = true;
+  let openedBy = add;
+  const chips = element('div', undefined, 'agent-composer-chips');
+  function openCategory(key) {
+    detail.hidden = !key;
+    const editingPrompt = key === 'instructions';
+    categories.hidden = editingPrompt;
+    flyout.classList.toggle('agent-composer-prompt', editingPrompt);
+    settings.hidden = !editingPrompt;
+    resources.hidden = key === 'instructions';
+    for (const section of resources.querySelectorAll('[data-attachment]')) {
+      section.hidden = section.dataset.attachment !== key;
+    }
+    for (const button of categories.querySelectorAll('button')) {
+      button.setAttribute('aria-pressed', String(button.dataset.category === key));
+    }
+    resources.dispatchEvent(new CustomEvent('openattachment', {
+      detail:key === 'instructions' ? undefined : key
+    }));
+  }
+  for (const [key, label, iconName] of [['skill', 'Skills', 'prompt'], ['mcp_connection', 'Connectors', 'external']]) {
+    const category = iconButton(iconName, label, 'button quiet');
+    category.type = 'button';
+    category.dataset.category = key;
+    category.append(element('span', '›', 'agent-category-arrow'));
+    category.lastChild.setAttribute('aria-hidden', 'true');
+    category.addEventListener('click', () => openCategory(key));
+    categories.append(category);
+  }
+  function togglePicker(open, category) {
+    flyout.hidden = !open;
+    const editingPrompt = open && category === 'instructions';
+    add.setAttribute('aria-expanded', String(open && !editingPrompt));
+    prompt.setAttribute('aria-expanded', String(editingPrompt));
+    if (open) {
+      openedBy = editingPrompt ? prompt : add;
+      openCategory(category);
+      if (editingPrompt) instructions.querySelector('textarea').focus();
+      else (categories.querySelector('[aria-pressed=true]') ?? categories.querySelector('button')).focus();
+    }
+  }
+  add.addEventListener('click', () => togglePicker(flyout.hidden || openedBy !== add));
+  prompt.addEventListener('click', () => togglePicker(flyout.hidden || openedBy !== prompt, 'instructions'));
+  done.addEventListener('click', () => {
+    togglePicker(false);
+    prompt.focus();
+  });
+  picker.addEventListener('focusout', event => {
+    if (event.relatedTarget && !picker.contains(event.relatedTarget)) togglePicker(false);
+  });
+  picker.addEventListener('keydown', event => {
+    if (event.key !== 'Escape' || flyout.hidden) return;
+    event.stopPropagation();
+    togglePicker(false);
+    openedBy.focus();
+  });
+  detail.append(resources, settings);
+  flyout.append(categories, detail);
+  picker.append(add, prompt, flyout);
+
+  const composer = element('form', undefined, 'agent-chat-composer');
+  const message = element('textarea');
+  message.rows = 3;
+  message.required = true;
+  message.placeholder = 'Send a test message…';
+  message.setAttribute('aria-label', 'Test message');
+  const send = iconButton('arrow', 'Send', 'button primary agent-chat-send');
+  send.type = 'submit';
+  const controls = element('div', undefined, 'agent-chat-controls');
+  controls.append(picker, chips, modelField, send);
+  const status = element('p', undefined, 'studio-run-notice');
+  status.setAttribute('role', 'status');
+  const hint = element('p', undefined, 'agent-chat-hint');
+  const publishHint = element('p', undefined, 'agent-chat-hint agent-chat-publish-hint');
+  publishHint.id = 'agent-chat-publish-hint';
+  publish.setAttribute('aria-describedby', publishHint.id);
+  composer.append(message, controls, status);
+  root.append(header, publishHint, conversation, composer, hint);
+  const value = (parent, selector) => parent.querySelector(selector).value;
+  const configuration = () => ({name:value(name, 'input').trim() || 'Untitled Agent',
+    instructions:value(instructions, 'textarea').trim() || 'Respond helpfully to the user.',
+    description:saved?.description ?? '', starter:saved?.starter ?? '', max_tokens:saved?.max_tokens ?? null,
+    provider:model.value, mcp_connection:value(resources, '[name=mcp_connection]'), skill:value(resources, '[name=skill]')});
+  const signature = () => JSON.stringify(configuration());
+  const update = () => {
+    const currentSignature = signature();
+    const dirty = savedConfiguration !== currentSignature;
+    const tested = testedConfiguration === currentSignature;
+    send.disabled = busy || !model.value || !message.value.trim();
+    send.setAttribute('aria-label', pendingInput ? 'Sending…' : 'Send');
+    send.title = pendingInput ? 'Sending…' : 'Send';
+    save.disabled = busy || !model.value || !dirty;
+    publish.disabled = busy || !tested;
+    publish.hidden = !tested;
+    reset.hidden = !turns.length;
+    reset.disabled = busy;
+    draftState.textContent = dirty ? 'Unsaved draft' : 'Draft saved';
+    publishHint.textContent = testedConfiguration && !tested ? 'Configuration changed. Send a test to publish.' : '';
+    hint.textContent = !turns.length && !pendingInput ? 'Enter to send · Shift + Enter for a new line' : '';
+    const draft = configuration();
+    prompt.classList.toggle('has-prompt', Boolean(value(instructions, 'textarea').trim()));
+    const selections = [
+      ['skill', draft.skill, ofKind('skill').find(item => item.id === draft.skill)?.name],
+      ['mcp_connection', draft.mcp_connection, ofKind('mcp_connection').find(item => item.id === draft.mcp_connection) ??
+        connectionCatalogue.find(item => item.id === draft.mcp_connection)]
+    ];
+    const selected = selections.filter(([, id]) => id);
+    const labels = selected.map(([key, id, item]) => key === 'skill' ? item ?? id :
+      item ? toolDisplayName(item) : id);
+    if (JSON.stringify(labels) !== chips.dataset.labels) {
+      chips.dataset.labels = JSON.stringify(labels);
+      chips.replaceChildren(...selected.map(([key], index) => {
+        const chip = element('button', labels[index], 'pill agent-composer-chip');
+        chip.type = 'button';
+        chip.addEventListener('click', () => togglePicker(true, key));
+        return chip;
+      }));
+    }
+  };
+  function draw() {
+    conversation.replaceChildren();
+    for (const turn of turns) appendChatTurn(conversation, turn.input, turn.trace);
+    if (pendingInput) conversation.append(element('p', pendingInput, 'agent-chat-user'),
+      element('p', 'Waiting for a reply…', 'agent-chat-pending'));
+  }
+  async function persist(draft = configuration()) {
+    const profile = await resolveDraftTool(draft);
+    const result = saved
+      ? await platformRequest('/agent-update', {...profile, agent:saved.id})
+      : await platformRequest('/agents', {...profile, source:'studio'});
+    saved = result;
+    savedConfiguration = JSON.stringify(draft);
+    records = [result, ...records.filter(item => item.id !== result.id)];
+    showIdentity?.(result);
+    return result;
+  }
+  reset.addEventListener('click', () => {
+    overflow.open = false;
+    turns.length = 0;
+    testedConfiguration = undefined;
+    status.textContent = '';
+    draw();
+    update();
+    message.focus();
+  });
+  save.addEventListener('click', async () => {
+    overflow.open = false;
+    more.focus();
+    busy = true;
+    update();
+    try {
+      await persist();
+      status.textContent = 'Draft saved.';
+    } catch (error) {status.textContent = error.message;}
+    finally {busy = false; update();}
+  });
+  publish.addEventListener('click', () => {
+    if (publish.disabled) return;
+    const tested = configuration();
+    const destination = field('destination', 'Destination', [['api', 'API · Staging'], ['wecom', 'WeCom']]);
+    destination.querySelector('select').value = 'api';
+    const staging = saved && ofKind('agent_release').find(item => item.agent === saved.id && item.environment === 'staging');
+    const details = element('p');
+    const updateDetails = () => {
+      details.textContent = destination.querySelector('select').value === 'api'
+        ? (staging ? 'Replace the Staging API version with the configuration you just tested.' :
+          'Publish the configuration you just tested to the Staging API.')
+        : 'Save this draft and open the WeCom setup to choose a channel and release.';
+    };
+    destination.addEventListener('change', updateDetails);
+    updateDetails();
+    let version;
+    const form = formPanel('Choose a destination', [destination, details], 'Publish to Staging', async data => {
+      const updated = version ? saved : await persist(tested);
+      if (data.destination === 'api') {
+        version ??= await platformRequest('/agent-versions', {agent:updated.id,
+          label:new Date().toISOString().slice(0, 16).replace('T', ' ') + ' UTC'});
+        const release = await platformRequest('/agent-releases', {version:version.id, environment:'staging',
+          ...(staging ? {expected_release:staging.id} : {only_if_unpublished:true})});
+        if (release.version !== version.id) throw new Error('Staging changed. Reopen this Agent before publishing.');
+        records = [release, version, ...records.filter(item => item.id !== release.id && item.id !== version.id)];
+        const chat = element('button', 'Open Staging chat', 'button primary');
+        chat.addEventListener('click', () => {
+          byId('modal').close();
+          loadModule('gallery-chat', {id:updated.id, environment:'staging'});
+        });
+        const api = element('button', 'API details', 'button quiet');
+        api.addEventListener('click', () => openAgentUsage(updated, true));
+        const actions = element('div', undefined, 'section-actions');
+        actions.append(chat, api);
+        openModal('Published to Staging', [element('p', updated.name + ' is ready to use in Gallery.'), actions]);
+        chat.focus();
+      } else {
+        byId('modal').close();
+        await openAgentDetail(updated.id, 'publish');
+        platformContent.querySelector('.wecom-publishing')?.scrollIntoView();
+      }
+    });
+    const submit = form.querySelector('button[type=submit]');
+    destination.addEventListener('change', () => {
+      submit.textContent = destination.querySelector('select').value === 'api' ? 'Publish to Staging' : 'Set up WeCom';
+    });
+    openModal('Publish draft', [form]);
+  });
+  name.addEventListener('input', update);
+  composer.addEventListener('input', update);
+  composer.addEventListener('change', update);
+  resources.addEventListener('click', () => queueMicrotask(update));
+  root.addEventListener('click', event => {
+    if (!flyout.hidden && !picker.contains(event.target) && !chips.contains(event.target)) togglePicker(false);
+  });
+  message.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      if (!send.disabled) composer.requestSubmit();
+    }
+  });
+  composer.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (send.disabled) return;
+    const input = message.value.trim();
+    togglePicker(false);
+    const submitted = signature();
+    const draft = configuration();
+    busy = true;
+    pendingInput = input;
+    message.value = '';
+    status.textContent = '';
+    draw();
+    update();
+    message.focus();
+    conversation.lastElementChild?.scrollIntoView({block:'nearest'});
+    try {
+      const history = recentChatMessages(turns);
+      const trace = await platformRequest('/runs', {target_kind:'agent', target:saved?.id,
+        draft:await resolveDraftTool(draft), input, history});
+      turns.push({input, trace});
+      if (!trace.error && trace.status === 'success') testedConfiguration = submitted;
+    } catch (error) {
+      if (!message.value) message.value = input;
+      status.textContent = error.message;
+    } finally {
+      pendingInput = undefined;
+      busy = false;
+      draw();
+      update();
+      conversation.lastElementChild?.scrollIntoView({block:'nearest'});
+    }
+  });
+  if (agent) savedConfiguration = signature();
+  update();
+  return root;
+}
+
+function agentDraftComposer(fields) {
+  const request = field('request', fields ? 'What would you like to change?' : 'What should your Agent do?', 'textarea');
+  const input = request.querySelector('textarea');
+  input.maxLength = 2000;
+  input.placeholder = fields ? 'Make the replies shorter and always link to the source…'
+    : 'Build an assistant that answers questions about our project…';
+  const panel = formPanel(fields ? 'Revise with a message' : 'Describe an Agent', [request,
+    element('small', 'Draft requests use Hosted DeepSeek and your account balance.')
+  ], 'Generate draft', async data => {
+    const read = name => fields.querySelector('[name=' + name + ']').value;
+    const current = fields && read('name').trim() && read('instructions').trim()
+      ? Object.fromEntries(['name', 'description', 'instructions', 'starter'].map(name => [name, read(name)])) : undefined;
+    const proposal = await platformRequest('/agent-draft', {request:data.request, current});
+    if (!panel.isConnected) return;
+    const result = element('div', undefined, 'draft-proposal');
+    result.append(element('strong', proposal.name), element('p', proposal.description),
+      element('pre', proposal.instructions));
+    if (proposal.starter) result.append(element('p', proposal.starter));
+    const apply = element('button', fields ? 'Apply to form' : 'Review configuration', 'button primary');
+    apply.type = 'button';
+    apply.addEventListener('click', () => {
+      if (fields) {
+        for (const name of ['name', 'description', 'instructions', 'starter']) {
+          fields.querySelector('[name=' + name + ']').value = proposal[name] ?? '';
+        }
+        result.replaceChildren(element('p', 'Applied to the form. Review and save your changes.'));
+      } else panel.replaceWith(agentConfigurationPage(proposal, undefined, true));
+    });
+    result.append(apply);
+    panel.querySelector('.draft-proposal')?.remove();
+    panel.append(result);
+  });
+  panel.classList.add('agent-draft-composer', 'wide');
+  if (!hostedModelAvailable || !accountStatus?.user) {
+    input.disabled = true;
+    panel.querySelector('[type=submit]').disabled = true;
+    panel.querySelector('[role=status]').textContent = 'Draft generation requires signed-in Hosted DeepSeek access.';
+  }
+  return panel;
+}
+
+function agentConfigurationPage(agent, showIdentity, creating = false) {
   const choices = studioModels();
   if (agent.provider && !choices.some(([id]) => id === agent.provider)) choices.unshift([agent.provider, recordName(agent.provider)]);
-  if (!agent.provider && choices.length) choices.unshift(['', 'Workspace default']);
-  const fields = agentFields({...agent, provider:agent.provider ?? ''}, choices);
+  if (!agent.provider && choices.length && !creating) choices.unshift(['', 'Default model']);
+  const fields = agentFields({...agent, provider:agent.provider ?? (creating ? choices[0]?.[0] : '')}, choices);
   const providerInput = fields.querySelector('select');
-  if (!agent.provider) {
+  if (!agent.provider && !creating) {
     providerInput.required = false;
     if (choices.length) providerInput.remove(0);
   }
-  const dialog = byId('studio-configuration');
-  const close = dialog.querySelector('.modal-head button');
-  const blockEscape = event => event.preventDefault();
-  const panel = formPanel(agent.name, [fields], 'Save changes', async data => {
-    close.disabled = cancel.disabled = true;
-    dialog.addEventListener('cancel', blockEscape);
+  const panel = formPanel('Configure Agent', [fields], creating ? 'Create Agent' : 'Save changes', async data => {
+    back.disabled = true;
     try {
+      data = await resolveDraftTool(data);
+      if (creating) {
+        const created = await platformRequest('/agents', {...agentPayload(data), source:'studio'});
+        if (panel.isConnected) await openAgentDetail(created.id, 'configure');
+        return;
+      }
       const updated = await platformRequest('/agent-update', {...agentPayload(data), agent:agent.id});
-      dialog.close();
-      afterSave(updated);
+      records = records.map(record => record.id === updated.id ? updated : record);
+      if (!panel.isConnected) return;
+      showIdentity(updated);
+      panel.replaceWith(agentConfigurationPage(updated, showIdentity));
+      const status = platformContent.querySelector('.studio-config-footer [role=status]');
+      status.textContent = 'Configuration saved.';
+      status.focus();
     } finally {
-      close.disabled = cancel.disabled = false;
-      dialog.removeEventListener('cancel', blockEscape);
+      back.disabled = false;
     }
   });
+  panel.className = 'agent-configuration wide';
+  panel.firstElementChild.remove();
   const form = panel.querySelector('form');
-  const cancel = element('button', 'Cancel', 'button');
-  cancel.type = 'button';
-  cancel.addEventListener('click', () => dialog.close());
+  const back = element('button', creating ? 'Back to Studio' : 'Test Agent', 'button');
+  back.type = 'button';
+  back.addEventListener('click', () => creating ? loadModule('studio') : openAgentDetail(agent.id, 'studio'));
   const footer = element('div', undefined, 'studio-config-footer');
   const actions = element('div', undefined, 'section-actions');
-  actions.append(cancel, form.querySelector('[type=submit]'));
-  footer.append(form.querySelector('[role=status]'), actions);
+  const status = form.querySelector('[role=status]');
+  status.tabIndex = -1;
+  actions.append(back, form.querySelector('[type=submit]'));
+  footer.append(status, actions);
   form.append(footer);
-  form.addEventListener('invalid', event => {
-    const disclosure = event.target.closest('details');
-    if (disclosure) disclosure.open = true;
-  }, true);
-  byId('studio-config-body').replaceChildren(panel);
-  dialog.showModal();
+  panel.prepend(agentDraftComposer(fields));
+  return panel;
 }
 
-function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
+function studioWorkspace(targets, selectedTarget, agentDetail) {
   if (!targets.length) {
     const panel = element('section', undefined, 'panel agent-empty wide');
     const create = iconButton('plus', 'New agent', 'button primary');
@@ -1679,15 +2383,14 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
     target.id, target.name + (target.kind === 'deployment' ? ' · Deployment' : '')
   ]));
   const targetInput = selector.querySelector('select');
-  selector.hidden = Boolean(onAgentUpdate);
+  selector.hidden = Boolean(agentDetail);
   targetInput.value = selectedTarget ?? lastStudioTarget ?? targets[0].id;
   if (!targetInput.value) targetInput.value = targets[0].id;
   const model = element('span', undefined, 'studio-model');
   const configure = iconButton('settings', 'Configure', 'button');
-  configure.setAttribute('aria-haspopup', 'dialog');
   toolbar.append(selector, model, configure);
   const use = iconButton('terminal', 'Use Agent', 'button');
-  if (!onAgentUpdate && accountStatus?.user) toolbar.append(use);
+  if (!agentDetail && accountStatus?.user) toolbar.append(use);
   use.addEventListener('click', () => openAgentUsage(current()));
   const newTest = iconButton('plus', 'New test', 'button quiet');
   newTest.hidden = true;
@@ -1713,7 +2416,7 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
   const notice = element('p', undefined, 'studio-run-notice');
   notice.setAttribute('role', 'status');
   const formFooter = element('div', undefined, 'composer-footer');
-  const balanceHint = element('span', 'Uses workspace balance', 'studio-run-context');
+  const balanceHint = element('span', 'Uses account balance', 'studio-run-context');
   const openBilling = iconButton('wallet', 'Open Billing', 'button quiet');
   openBilling.type = 'button';
   openBilling.hidden = true;
@@ -1726,7 +2429,7 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
 
   let pending = false;
   let selectedRun;
-  let showLatest = Boolean(onAgentUpdate);
+  let showLatest = Boolean(agentDetail);
   let requestTrace;
   const current = () => targets.find(target => target.id === targetInput.value);
   const setNotice = (text = '', error = false, showBilling = false) => {
@@ -1771,18 +2474,7 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
     draw();
   };
   targetInput.addEventListener('change', () => selectTarget());
-  configure.addEventListener('click', () => {
-    openAgentConfiguration(current(), updated => {
-      if (!panel.isConnected) return;
-      targets[targets.findIndex(item => item.id === updated.id)] = updated;
-      records = records.map(record => record.id === updated.id ? updated : record);
-      Array.from(targetInput.options).find(option => option.value === updated.id).textContent = updated.name;
-      if (current().id !== updated.id) return;
-      onAgentUpdate?.(updated);
-      selectTarget(false);
-      setNotice('Configuration saved.');
-    });
-  });
+  configure.addEventListener('click', () => openAgentDetail(current().id, 'configure'));
 
   newTest.addEventListener('click', () => {
     showLatest = false;
@@ -2020,7 +2712,7 @@ function agentRegistry() {
       avatar.append(icon(external ? 'external' : 'agents'));
       const labels = element('div');
       const details = element('button', agent.name, 'agent-name');
-      details.addEventListener('click', () => openAgentDetail(agent.id));
+      details.addEventListener('click', () => openAgentDetail(agent.id, external ? 'integration' : 'configure'));
       labels.append(details, element('p', agent.description || (external ? 'External agent' : 'Studio agent')));
       const usage = activity.get(agent.identifier);
       const observed = Boolean(usage);
@@ -2100,7 +2792,7 @@ async function loadModule(module, selectedTarget) {
   const request = ++moduleRequest;
   const currentRequest = () => request === moduleRequest && activeModule === module && !platformContent.hidden;
   activeModule = module;
-  if (['agent', 'agents', 'studio', 'connections', 'skills'].includes(module)) showWorkspaceArea('home');
+  if (['agent', 'agents', 'gallery', 'gallery-chat', 'studio', 'connections', 'skills'].includes(module)) showWorkspaceArea('home');
   else showWorkspaceArea('console');
   closeWorkspaceMenu();
   byId('tracing-content').hidden = true;
@@ -2108,7 +2800,8 @@ async function loadModule(module, selectedTarget) {
   byId('crumb').textContent = modules[module][0];
   platformContent.replaceChildren(element('p', 'Loading…', 'loading'));
   document.querySelectorAll('.nav').forEach(button => {
-    const current = button.dataset.module === (module === 'agent' ? 'agents' : module);
+    const active = ['agent', 'gallery-chat'].includes(module) ? 'current-agent' : module === 'agents' ? 'gallery' : module;
+    const current = button.dataset.module === active;
     button.classList.toggle('active', current);
     if (current) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
@@ -2126,6 +2819,14 @@ async function loadModule(module, selectedTarget) {
     if (nextRecords) records = nextRecords;
     if (['billing', 'models'].includes(module)) billing = nextBilling;
     if (nextKeys) apiKeys = nextKeys;
+    if (module === 'agent' || module === 'gallery-chat') {
+      const agent = ofKind('agent').find(item => item.id === selectedTarget?.id && item.source !== 'external');
+      if (agent) {
+        currentAgentId = agent.id;
+        try {sessionStorage.setItem(currentAgentKey, agent.id);}
+        catch {}
+      }
+    }
     renderModule(module, selectedTarget);
   } catch (error) {
     if (currentRequest()) platformContent.replaceChildren(element('p', error.message));
@@ -2133,7 +2834,8 @@ async function loadModule(module, selectedTarget) {
 }
 
 document.querySelectorAll('[data-module]').forEach(button => {
-  button.addEventListener('click', () => loadModule(button.dataset.module));
+  button.addEventListener('click', () => button.dataset.module === 'current-agent'
+    ? openCurrentAgent() : loadModule(button.dataset.module));
 });
 
 byId('connect').addEventListener('click', async () => {
@@ -2141,7 +2843,8 @@ byId('connect').addEventListener('click', async () => {
   button.disabled = true;
   try {
     records = await platformRequest();
-    openCreateAgent();
+    if (accountStatus?.user && studioModels().length) await loadModule('studio');
+    else openCreateAgent();
   } catch (error) {
     openModal('New agent', [element('p', error.message)]);
   } finally {

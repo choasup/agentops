@@ -89,7 +89,10 @@ test('published Agent configuration is isolated by workspace and environment and
     assert.equal(options.headers.Authorization, 'Bearer fixture-provider-key');
     const body = JSON.parse(options.body);
     modelCalls.push(body);
-    return Response.json({id:'fixture-completion', choices:[{message:{content:body.messages[0].content}}],
+    const draft = body.messages[0].content.startsWith('Help a user draft an Agent.');
+    const content = draft ? JSON.stringify({name:'Draft assistant', description:'Summarizes a project.',
+      instructions:'Summarize source material.', starter:'What changed?'}) : body.messages[0].content;
+    return Response.json({id:'fixture-completion', choices:[{message:{content}}],
       usage:{prompt_tokens:20, completion_tokens:4, total_tokens:24}});
   });
 
@@ -197,6 +200,13 @@ test('published Agent configuration is isolated by workspace and environment and
   assert.equal(modelCalls.at(-1).max_tokens,40);
   const preserveStaging = await create('agent-releases', {version:second.id,environment:'staging',only_if_unpublished:true});
   assert.equal(preserveStaging.id,firstRelease.id);
+  const galleryPayload = {...chatPayload, surface:'gallery', expected_release:firstRelease.id};
+  const galleryReply = await create('runs', galleryPayload);
+  assert.equal(galleryReply.surface, 'gallery');
+  assert.equal(galleryReply.agent_release, firstRelease.id);
+  assert.equal(galleryReply.agent_version, first.id);
+  assert.equal((await action('runs', galleryPayload, {token:key.token})).status, 403);
+  assert.equal((await action('runs', {...galleryPayload, expected_release:'outdated'})).status, 400);
   const secondRelease = await create('agent-releases', {version:second.id,environment:'staging'});
   assert.equal(secondRelease.previous,first.id);
   assert.equal((await action('agent-releases', {version:first.id,environment:'staging',expected_release:firstRelease.id})).status,400);
@@ -300,15 +310,26 @@ test('published Agent configuration is isolated by workspace and environment and
   assert.equal(gateway.diagnostics.length, 9);
   await gateway.ctx.storage.put('wecom-bot', bot);
   let mentionReads = 0;
+  let comments = 0;
   const socket = {send(raw) {
     const request = JSON.parse(raw);
     assert.equal(request.body.topic_id, 'fixture-topic');
     const mention = request.body.type === undefined;
+    if (request.cmd === 'aibot_topic_send_reply') {
+      comments++;
+      assert.deepEqual(Object.keys(request.body).sort(), ['content', 'post_id', 'topic_id']);
+      assert.equal(request.body.post_id, 'comment-post');
+      assert.match(request.body.content, /summarize/i);
+      queueMicrotask(() => gateway.onMessage(socket, bot, JSON.stringify({headers:request.headers, errcode:0,
+        body:{reply_id:'fixture-comment'}})));
+      return;
+    }
     if (request.headers.req_id.startsWith('topic_trigger_')) {
       assert.equal(request.cmd, 'aibot_topic_get_post_list');
-      assert.deepEqual(request.body.post_id_list, ['new-post']);
+      const [post_id] = request.body.post_id_list;
+      assert.ok(['new-post', 'comment-post'].includes(post_id));
       queueMicrotask(() => gateway.onMessage(socket, bot, JSON.stringify({headers:request.headers, errcode:0,
-        body:{post_list:[{post_id:'new-post', content:'TRIGGER-42 a new post'}]}})));
+        body:{post_list:[{post_id, content:post_id === 'new-post' ? 'TRIGGER-42 a new post' : 'COMMENT-42 a completed test'}]}})));
       return;
     }
     if (mention) {
@@ -367,10 +388,10 @@ test('published Agent configuration is isolated by workspace and environment and
   assert.equal((await action('agent-releases', {version:privateVersion.id,environment:'staging'})).status,400);
   const trigger = await create('wecom-trigger-enable', {connection:channel.id, agent:agent.id,
     environment:'staging', marker:'TRIGGER-42'});
-  const postEvent = (type, msgid) => JSON.stringify({cmd:'aibot_topic_event_callback',
+  const postEvent = (type, msgid, post_id = 'new-post') => JSON.stringify({cmd:'aibot_topic_event_callback',
     headers:{req_id:'post-event-request'}, body:{msgid, msgtype:'event', aibotid:bot.botId, topic_id:'fixture-topic',
       create_time:trigger.enabled_at, from:{userid:'fixture-user'},
-      event:{eventtype:'topic_event', topic_event:{type, post_id:'new-post'}}}});
+      event:{eventtype:'topic_event', topic_event:{type, post_id}}}});
   const callsBeforeTrigger = modelCalls.length;
   await gateway.onMessage(socket, bot, postEvent(2, 'post-updated'));
   assert.equal(modelCalls.length, callsBeforeTrigger);
@@ -386,6 +407,38 @@ test('published Agent configuration is isolated by workspace and environment and
   await create('wecom-trigger-disable', {connection:channel.id});
   await gateway.onMessage(socket, bot, postEvent(1, 'post-after-disable'));
   assert.deepEqual(gateway.diagnostics.at(-1), {event:'topic_post_created', result:'no_active_trigger'});
+  const commentTrigger = await create('wecom-trigger-enable', {connection:channel.id, agent:agent.id,
+    environment:'staging', marker:'COMMENT-42', comment:true});
+  await gateway.onMessage(socket, bot, postEvent(1, 'comment-created', 'comment-post'));
+  await gateway.onMessage(socket, bot, postEvent(1, 'comment-replayed', 'comment-post'));
+  assert.equal(comments, 1);
+  const commented = (await request('/api/traces')).data.find(item => item.trigger_id === commentTrigger.id);
+  assert.equal(commented.delivery, 'comment_sent');
+  assert.equal(commented.steps.at(-1).name, 'Post WeCom comment');
+  assert.deepEqual(commented.steps.at(-1).output, {state:'comment_sent', reply_id:'fixture-comment'});
+  const staleDisable = await action('wecom-trigger-disable', {connection:channel.id, expected_trigger:trigger.id});
+  assert.equal(staleDisable.status, 400);
+  await create('wecom-trigger-disable', {connection:channel.id, expected_trigger:commentTrigger.id});
   await gateway.ctx.storage.put('wecom-bot', {...bot, botId:'other-bot'});
   assert.equal((await action('runs', channelRun)).status,502);
+  const draftRequest = {request:'Draft an assistant that summarizes source material.'};
+  assert.equal((await action('agent-draft', draftRequest, {token:key.token})).status, 403);
+  assert.equal((await action('agent-draft', {request:'x'.repeat(2001)})).status, 400);
+  const beforeDraft = (await request('/api/agents')).data;
+  const proposed = await create('agent-draft', draftRequest);
+  assert.equal(proposed.name, 'Draft assistant');
+  assert.equal(proposed.instructions, 'Summarize source material.');
+  assert.ok((await request('/api/traces')).data.some(trace => trace.id === proposed.trace));
+  assert.deepEqual((await request('/api/agents')).data, beforeDraft);
+
+  const draftTest = {target_kind:'agent', draft:{name:'Chat draft', provider:'hosted:deepseek',
+    instructions:'Reply in Chinese.'}, input:'What did I ask?', history:[
+    {role:'user', content:'Hello'}, {role:'assistant', content:'你好'}
+  ]};
+  assert.equal((await action('runs', draftTest, {token:key.token})).status, 403);
+  const draftRun = await create('runs', draftTest);
+  assert.equal(draftRun.output, draftTest.draft.instructions);
+  assert.deepEqual(modelCalls.at(-1).messages.slice(1), [...draftTest.history, {role:'user', content:draftTest.input}]);
+  assert.deepEqual((await request('/api/agents')).data, beforeDraft);
+
 });
