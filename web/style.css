@@ -558,3 +558,6 @@ dialog::backdrop {background: #111a3a70}
 @media (max-width:680px) {
   .registry-mobile-model {display:block}
 }
+
+.agent-detail-nav {display:flex; flex-wrap:wrap; gap:6px; border-bottom:1px solid var(--border); padding-bottom:8px}
+.agent-detail-nav [aria-current="page"] {background:var(--accent-soft); color:var(--accent-dark)}
