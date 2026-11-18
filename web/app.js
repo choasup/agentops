@@ -4,6 +4,8 @@ let traces = [];
 let view = 'overview';
 let scopedAgent;
 let tracesReady = false;
+let traceMode = 'sessions';
+let openSession;
 const money = amount => '$' + amount.toFixed(4);
 const latency = duration => (duration / 1000).toFixed(2) + ' s';
 
@@ -55,12 +57,19 @@ function statusPill(status) {
     'pill ' + status);
 }
 
+function deliveryLabel(trace) {
+  return {replied:'WeCom confirmed reply', fallback_replied:'WeCom confirmed fallback',
+    reply_failed:'WeCom reply failed'}[trace.delivery] ??
+    (trace.session_id && trace.channel === 'wecom' ? 'WeCom delivery unconfirmed' : '');
+}
+
 function showTrace(trace, linked = false) {
   const inspector = byId('trace-inspector');
   const metadata = element('div', undefined, 'trace-meta');
   metadata.append(statusPill(runStatus(trace)), element('span', latency(trace.duration), 'pill'),
     element('span', number.format(trace.tokens) + ' tokens', 'pill'));
   if (trace.channel === 'wecom') metadata.append(element('span', 'WeCom', 'pill'));
+  if (deliveryLabel(trace)) metadata.append(element('span', deliveryLabel(trace), 'pill'));
   if (trace.environment) metadata.append(element('span', trace.environment, 'pill'));
   if (typeof trace.cost_nanos === 'number') metadata.append(element('span', billingMoney(trace.cost_nanos), 'pill'));
 
@@ -83,7 +92,12 @@ function showTrace(trace, linked = false) {
       field.select();
     }
   });
-  summary.append(identity, link);
+  const actions = element('div', undefined, 'trace-mode');
+  const addExample = iconButton('plus', 'Add to dataset');
+  addExample.disabled = typeof trace.input !== 'string' || !trace.input.trim();
+  addExample.addEventListener('click', () => addTraceExample(trace));
+  actions.append(addExample, link);
+  summary.append(identity, actions);
 
   const split = element('div', undefined, 'inspector-split');
   const detail = element('section', undefined, 'step-detail');
@@ -213,6 +227,51 @@ function renderChart(scope) {
   }));
 }
 
+function renderSessions(scope, matches) {
+  const sessions = new Map();
+  const matching = new Set(matches.map(trace => trace.session_id).filter(Boolean));
+  for (const trace of scope) {
+    if (!matching.has(trace.session_id)) continue;
+    if (!sessions.has(trace.session_id)) sessions.set(trace.session_id, []);
+    sessions.get(trace.session_id).push(trace);
+  }
+  byId('count').textContent = sessions.size + (sessions.size === 1 ? ' session' : ' sessions');
+  const list = byId('trace-session-list');
+  const notice = element('p', 'Runs without a session are available in Runs.', 'empty');
+  if (!sessions.size) {
+    list.replaceChildren(element('p', 'No matching sessions.', 'empty'), notice);
+    return;
+  }
+  list.replaceChildren(...[...sessions].map(([id, turns]) => {
+    const latest = turns[0];
+    const section = element('details', undefined, 'trace-session');
+    const heading = element('summary');
+    const preview = typeof latest.input === 'string' ? latest.input.trim().slice(0, 100) : latest.name;
+    heading.append(element('strong', preview || latest.name),
+      element('span', [latest.name, latest.channel === 'wecom' ? 'WeCom' : latest.channel,
+        latest.environment, turns.length + (turns.length === 1 ? ' turn' : ' turns'),
+        new Date(latest.at).toLocaleString()].filter(Boolean).join(' · ')));
+    section.open = openSession === id;
+    heading.addEventListener('click', () => {openSession = section.open ? undefined : id;});
+    section.name = 'trace-session';
+    const timeline = element('ol', undefined, 'trace-session-turns');
+    for (const trace of [...turns].reverse()) {
+      const turn = element('li');
+      const open = element('button', 'View trace', 'button');
+      open.addEventListener('click', () => showTrace(trace));
+      const top = element('div', undefined, 'trace-mode');
+      top.append(element('time', new Date(trace.at).toLocaleString()), statusPill(runStatus(trace)));
+      if (deliveryLabel(trace)) top.append(element('span', deliveryLabel(trace), 'pill'));
+      top.append(open);
+      turn.append(top, payload('Input', trace.input),
+        payload(trace.error ? 'Error' : 'Response', trace.error ?? trace.output));
+      timeline.append(turn);
+    }
+    section.append(heading, timeline);
+    return section;
+  }), notice);
+}
+
 function updateTraceProjects() {
   const projects = new Map(traces.map(trace => [traceScope(trace), traceScope(trace)]));
   if (scopedAgent) projects.set(scopedAgent.identifier, scopedAgent.name);
@@ -246,9 +305,17 @@ function render() {
   const status = byId('status').value;
   const filtered = scope.filter(trace =>
     (!status || trace.status === status) &&
-    (!query || [trace.name, trace.project, trace.id, trace.channel, JSON.stringify(trace.input), JSON.stringify(trace.error)]
+    (!query || [trace.name, trace.project, trace.id, trace.channel, trace.session_id, JSON.stringify(trace.input), JSON.stringify(trace.error)]
       .some(value => value?.toLowerCase().includes(query)))
   );
+  const sessions = view === 'traces' && traceMode === 'sessions';
+  byId('trace-mode').hidden = view !== 'traces';
+  byId('trace-session-list').hidden = !sessions;
+  byId('trace-run-list').hidden = sessions;
+  if (sessions) {
+    renderSessions(scope, filtered);
+    return;
+  }
   const limit = view === 'overview' ? 8 : filtered.length;
   byId('count').textContent = number.format(Math.min(limit, filtered.length)) + ' of ' + number.format(filtered.length) + ' runs';
   const rows = filtered.slice(0, limit).map(trace => {
@@ -288,6 +355,10 @@ async function refresh() {
     const response = await fetch('/api/traces', {cache: 'no-store'});
     if (!response.ok) throw new Error('Trace API unavailable');
     const saved = await response.json();
+    if (tracesReady && saved.length === traces.length && saved.every((item, index) => item.id === traces[index].id && item.delivery === traces[index].delivery)) {
+      byId('notice').textContent = '';
+      return true;
+    }
     traces = saved;
     tracesReady = true;
     updateTraceProjects();
@@ -357,6 +428,16 @@ function openAgentTraces(agent) {
 }
 
 for (const id of ['project', 'environment', 'status', 'search']) byId(id).addEventListener('input', render);
+
+for (const mode of ['sessions', 'runs']) {
+  byId('trace-' + mode).addEventListener('click', () => {
+    traceMode = mode;
+    for (const option of ['sessions', 'runs']) {
+      byId('trace-' + option).setAttribute('aria-pressed', String(option === traceMode));
+    }
+    render();
+  });
+}
 
 function startTraceMonitoring() {
   render();

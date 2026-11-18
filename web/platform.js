@@ -226,6 +226,54 @@ async function create(module, data) {
   await loadModule(module === 'examples' ? 'datasets' : module);
 }
 
+function traceLink(id, label) {
+  const link = element('a', label);
+  link.href = '/?trace=' + encodeURIComponent(id);
+  return link;
+}
+
+async function addTraceExample(trace) {
+  const message = element('p', 'Loading datasets…');
+  openModal('Add to dataset', [message]);
+  try {
+    const catalog = await platformRequest();
+    if (!message.isConnected || !byId('modal').open) return;
+    const datasets = catalog.filter(item => item.kind === 'dataset');
+    const dataset = field('dataset', 'Dataset', datasets.map(item => [item.id, item.name]));
+    if (datasets.length === 1) dataset.querySelector('select').value = datasets[0].id;
+    const input = field('input', 'Input', 'textarea', trace.input);
+    const expected = field('expected', 'Reference answer or required text', 'textarea');
+    const match = field('match', 'Pass when the reply', [
+      ['exact', 'Matches exactly'], ['contains', 'Contains the required text']
+    ]);
+    match.querySelector('select').value = 'exact';
+    let createdDataset;
+    const form = formPanel('', [datasets.length ? dataset : field('name', 'New dataset name'),
+      input, expected, match], 'Save example', async data => {
+      const destination = data.dataset ?? (createdDataset ??= (await platformRequest('/datasets', {name:data.name})).id);
+      await platformRequest('/examples', {dataset:destination, input:data.input, expected:data.expected,
+        match:data.match, source_trace:trace.id});
+      const open = element('button', 'Open Datasets', 'button primary');
+      open.addEventListener('click', () => {
+        byId('modal').close();
+        byId('trace-inspector').close();
+        loadModule('datasets');
+      });
+      openModal('Example saved', [open]);
+      open.focus();
+    });
+    form.firstElementChild.remove();
+    const recorded = trace.error ?? trace.output;
+    const observed = element('details', undefined, 'trace-sample-output');
+    observed.append(element('summary', trace.error ? 'Inspect recorded error' : 'Inspect recorded reply'),
+      element('pre', typeof recorded === 'string' ? recorded : JSON.stringify(recorded ?? null, null, 2)));
+    openModal('Add to dataset', [observed, form]);
+    input.querySelector('textarea').focus();
+  } catch (error) {
+    message.textContent = error.message;
+  }
+}
+
 const connectionCatalogue = [
   {id:'cloudflare-docs', brand:'Cloudflare', logo:'cloudflare.png', name:'Cloudflare Documentation',
     access:'Read-only MCP', description:'Search public Cloudflare developer documentation.',
@@ -507,8 +555,16 @@ function renderModule(module, selectedTarget) {
     ], 'Add example', data => create('examples', {...data, input:jsonInput(data.input), expected:jsonInput(data.expected)})));
     panels.push(listPanel('Datasets', ofKind('dataset').map(dataset => {
       const examples = ofKind('example').filter(item => item.dataset === dataset.id);
-      return expandable(dataset.name + ' · ' + examples.length + ' examples',
-        examples.map(({input, expected}) => ({input, expected})));
+      const group = element('details');
+      group.append(element('summary', dataset.name + ' · ' + examples.length + ' examples'));
+      for (const example of examples) {
+        const item = element('div', undefined, 'release-entry');
+        item.append(payload('Input', example.input),
+          payload(example.match === 'contains' ? 'Required text' : 'Reference answer', example.expected));
+        if (example.source_trace) item.append(traceLink(example.source_trace, 'Source trace'));
+        group.append(item);
+      }
+      return group;
     })));
   }
 
@@ -668,7 +724,16 @@ function agentEvaluationPanels(agentId) {
     const variants = item.variants.map(variant => {
       const version = versions.find(value => value.id === variant.version);
       const passed = variant.results.filter(result => result.passed).length;
-      return expandable((version?.label ?? variant.version) + ' · ' + passed + '/' + variant.results.length, variant.results);
+      const report = expandable((version?.label ?? variant.version) + ' · ' + passed + '/' + variant.results.length,
+        variant.results);
+      for (const [index, result] of variant.results.entries()) {
+        if (result.passed) continue;
+        const links = element('div', undefined, 'trace-mode');
+        if (result.source_trace) links.append(traceLink(result.source_trace, 'Example ' + (index + 1) + ' source trace'));
+        if (result.trace) links.append(traceLink(result.trace, 'Example ' + (index + 1) + ' evaluation trace'));
+        if (links.childElementCount) report.append(links);
+      }
+      return report;
     });
     const section = element('div', undefined, 'release-entry');
     section.append(element('strong', recordName(item.agent) + ' · ' + recordName(item.dataset)),

@@ -1,10 +1,11 @@
 // One outbound WeCom connection per workspace. Storage alarms recover it after eviction.
 const configKey = 'wecom-bot';
 export class WeComGateway {
-  constructor(ctx, decrypt, run) {
+  constructor(ctx, decrypt, run, recordDelivery) {
     this.ctx = ctx;
     this.decrypt = decrypt;
     this.run = run;
+    this.recordDelivery = recordDelivery;
     this.status = 'connecting';
     this.seen = new Map();
     this.pendingReplies = new Map();
@@ -156,8 +157,14 @@ export class WeComGateway {
     }
     let content;
     let failure;
+    let traceId;
     try {
-      const trace = await this.run(config, text);
+      const body = frame.body;
+      const group = body.chattype === 'group';
+      const conversation = group ? body.chatid : body.from?.userid;
+      const trace = await this.run(config, text, typeof conversation === 'string' && conversation
+        ? [group ? 'group' : 'direct', conversation] : null);
+      traceId = trace.id;
       if (this.socket === socket && this.latestMessage === key) await this.ctx.storage.put('wecom-trace', trace.id);
       if (trace.status === 'error' || typeof trace.output !== 'string') throw new Error(trace.error ?? 'Agent could not generate a reply');
       content = trace.output.trim() || '暂时没有可发送的回复。';
@@ -165,12 +172,18 @@ export class WeComGateway {
       failure = error.message;
       content = '暂时无法回复，请稍后重试。';
     }
-    if (this.socket !== socket) return;
+    if (this.socket !== socket) {
+      if (traceId) this.recordDelivery(traceId, 'reply_failed');
+      return;
+    }
     try {
       await this.reply(socket, request, id, Array.from(content).slice(0, 2048).join(''), true);
-      await this.updateDelivery(socket, key, failure ? 'agent_failed' : 'replied', failure);
     } catch (error) {
+      if (traceId) this.recordDelivery(traceId, 'reply_failed');
       await this.updateDelivery(socket, key, 'reply_failed', error.message);
+      return;
     }
+    if (traceId) this.recordDelivery(traceId, failure ? 'fallback_replied' : 'replied');
+    await this.updateDelivery(socket, key, failure ? 'agent_failed' : 'replied', failure);
   }
 }

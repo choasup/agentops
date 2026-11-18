@@ -198,8 +198,14 @@ export class Workspace extends DurableObject {
     this.billing = new Billing(ctx.storage, env);
     this.wecom = new WeComGateway(ctx,
       token => unseal(token, env.AGENTOPS_INGEST_TOKEN, 'wecom-bot'),
-      (config, input) => this.action('runs', {target_kind:'agent_release',target:config.agent,
-        environment:config.environment,input,history:[]}, true, 'wecom'));
+      async (config, input, conversation) => {
+        const session = conversation ? await sha256(JSON.stringify([ctx.id.toString(),
+          config.botId, config.agent, config.environment, ...conversation])) : undefined;
+        return this.action('runs', {target_kind:'agent_release',target:config.agent,
+          environment:config.environment,input,history:[]}, true, {channel:'wecom', session_id:session});
+      }, (traceId, delivery) => this.sql.exec(
+        "UPDATE traces SET payload=json_set(payload,'$.delivery',?) WHERE json_extract(payload,'$.id')=?",
+        delivery, traceId));
   }
 
   async alarm() {await this.wecom.alarm();}
@@ -307,10 +313,13 @@ export class Workspace extends DurableObject {
           this.assignedReadTool(records, version, example.input), this.resolveSkill(records, version))
           : await this.execute(null, example.input, version.instructions, provider, version.max_tokens);
         results.push({example:example.id, input:example.input, expected:example.expected, output:result.output,
-          passed:result.output.trim() === example.expected.trim(), ...(result.id ? {trace:result.id} : {})});
+          passed:typeof result.output === 'string' && (example.match === 'contains'
+            ? result.output.includes(example.expected.trim()) : result.output.trim() === example.expected.trim()),
+          ...(result.id ? {trace:result.id} : {}), ...(example.source_trace ? {source_trace:example.source_trace} : {})});
       } catch (error) {
         if (!(error instanceof InputError || error instanceof BillingError)) throw error;
-        results.push({example:example.id, input:example.input, expected:example.expected, error:error.message, passed:false});
+        results.push({example:example.id, input:example.input, expected:example.expected, error:error.message, passed:false,
+          ...(example.source_trace ? {source_trace:example.source_trace} : {})});
       }
     }
     return {version:version.id, passed:results.every(result => result.passed), results};
@@ -351,7 +360,7 @@ export class Workspace extends DurableObject {
   }
 
   ingest(data) {
-    const {cost_nanos, key_id, agent_version, agent_release, ...reported} = data;
+    const {cost_nanos, key_id, agent_version, agent_release, session_id, ...reported} = data;
     const trace = {project:'default', status:'success', duration:0, tokens:0, cost:0, steps:[], ...reported};
     trace.name = requiredText(trace, 'name');
     trace.project = requiredText(trace, 'project');
@@ -422,7 +431,7 @@ export class Workspace extends DurableObject {
     }
   }
 
-  async action(action, data, studioSession = false, channel) {
+  async action(action, data, studioSession = false, channelAttribution) {
     const records = this.rows('records');
     const find = (key, kind) => {
       const identifier = requiredText(data, key);
@@ -534,7 +543,19 @@ export class Workspace extends DurableObject {
     if (action === 'examples') {
       const dataset = find('dataset', 'dataset');
       if (!('input' in data) || !('expected' in data)) throw new InputError('input and expected are required');
-      return this.save('example', {dataset:dataset.id, input:data.input, expected:data.expected});
+      const example = {dataset:dataset.id, input:data.input, expected:data.expected};
+      if (data.source_trace !== undefined) {
+        const trace = this.rows('traces').find(item => item.id === data.source_trace);
+        if (!trace) throw new InputError('Trace was not found');
+        example.source_trace = trace.id;
+      }
+      if (data.match === 'contains') {
+        if (typeof data.expected !== 'string' || !data.expected.trim()) {
+          throw new InputError('Enter the required text');
+        }
+        example.match = 'contains';
+      }
+      return this.save('example', example);
     }
     if (action === 'prompts') return this.save('prompt', {
       name:requiredText(data, 'name'), template:requiredText(data, 'template')
@@ -687,7 +708,7 @@ export class Workspace extends DurableObject {
       const previousMessages = history.map(({role, content}) => ({role, content}));
       const attribution = release ? {environment:release.environment, agent_version:release.version,
         agent_release:release.id} : {environment:'local'};
-      if (channel) attribution.channel = channel;
+      Object.assign(attribution, channelAttribution);
       if (target.source === 'external') throw new InputError('External agents run in your application');
       if (target.provider === hostedProviderId) {
         if (typeof data.input !== 'string' || !data.input.trim()) throw new InputError('Enter a test message');

@@ -682,3 +682,17 @@ dialog::backdrop {background: #111a3a70}
   .inspector-split {grid-template-columns:minmax(0,1fr)}
   .step-tree {border-left:0; border-top:1px solid var(--border); border-bottom:0}
 }
+
+.trace-mode {display:flex; flex-wrap:wrap; align-items:center; gap:8px}
+.trace-mode[hidden] {display:none}
+.trace-mode .button {min-height:32px; padding:5px 10px; font-size:12px}
+.trace-mode .button[aria-pressed="true"] {background:var(--panel-tint, #edf0ff); color:var(--primary, #303ddb)}
+.trace-session {border-top:1px solid var(--border)}
+.trace-session > summary {cursor:pointer; padding:14px 18px}
+.trace-session > summary > span {display:block; margin:4px 0 0 16px; color:var(--muted); font-size:12px}
+.trace-session-turns {margin:0; padding:0 18px 14px; list-style:none}
+.trace-session-turns > li {padding:12px 14px; border:1px solid var(--border); border-radius:8px; margin-top:8px}
+.trace-session-turns time {font-size:12px; color:var(--muted)}
+.trace-session-turns .button {margin-left:auto}
+.trace-session-turns .modal-section pre, .trace-sample-output pre {white-space:pre-wrap; overflow-wrap:anywhere}
+.trace-sample-output {margin-bottom:12px}

@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Deck</title>
 <link rel="icon" type="image/png" href="mark.png">
-<link rel="stylesheet" href="style.css?v=trace-readability">
-<script src="app.js?v=trace-readability" defer></script>
-<script src="platform.js?v=compact-publish" defer></script>
+<link rel="stylesheet" href="style.css?v=trace-sessions">
+<script src="app.js?v=trace-sessions" defer></script>
+<script src="platform.js?v=trace-sessions" defer></script>
 <script src="models.js" defer></script>
 <script src="selects.js" defer></script>
 <script src="account.js?v=studio-navigation" defer></script>
@@ -88,9 +88,9 @@
     </section>
     <section class="panel table-panel">
       <div class="panel-head"><div><h2>Recent traces</h2><p id="count"></p></div>
-        <div class="filters"><input id="search" type="search" aria-label="Search traces" placeholder="Search traces…"><select id="status" aria-label="Run status"><option value="">All statuses</option><option>success</option><option>error</option></select></div>
+        <div class="filters"><div id="trace-mode" class="trace-mode" role="group" aria-label="Trace view" hidden><button type="button" class="button" id="trace-sessions" aria-pressed="true">Sessions</button><button type="button" class="button" id="trace-runs" aria-pressed="false">Runs</button></div><input id="search" type="search" aria-label="Search traces" placeholder="Search traces…"><select id="status" aria-label="Run status"><option value="">All statuses</option><option>success</option><option>error</option></select></div>
       </div>
-      <div class="table-wrap"><table><thead><tr><th>Name</th><th>Agent / Project</th><th>Environment</th><th>Status</th><th>Latency</th><th>Tokens</th><th>Cost</th><th>Started</th></tr></thead><tbody id="rows"></tbody></table></div>
+      <div id="trace-session-list" hidden></div><div class="table-wrap" id="trace-run-list"><table><thead><tr><th>Name</th><th>Agent / Project</th><th>Environment</th><th>Status</th><th>Latency</th><th>Tokens</th><th>Cost</th><th>Started</th></tr></thead><tbody id="rows"></tbody></table></div>
     </section>
     <p id="notice" role="status"></p>
   </div>

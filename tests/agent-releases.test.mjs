@@ -15,7 +15,10 @@ const {default:worker, Workspace} = await import('../cloudflare/worker.mjs');
 
 function workspaceStorage() {
   const db = new DatabaseSync(':memory:');
+  const kv = new Map();
   return {
+    async put(key, value) {kv.set(key, value);},
+    async get(key) {return kv.get(key);},
     sql:{exec(query, ...args) {
       const statement = db.prepare(query);
       if (/^SELECT| RETURNING /i.test(query)) return {toArray:() => statement.all(...args)};
@@ -49,7 +52,7 @@ test('published Agent configuration is isolated by workspace and environment and
         workspace:session === 'other-session' ? otherWorkspace : workspace} : {claimed:Boolean(guest)});
     }})},
     WORKSPACE:{getByName(name) {
-      if (!instances.has(name)) instances.set(name, new Workspace({storage:workspaceStorage()}, env));
+      if (!instances.has(name)) instances.set(name, new Workspace({id:name, storage:workspaceStorage()}, env));
       return instances.get(name);
     }}
   };
@@ -158,8 +161,15 @@ test('published Agent configuration is isolated by workspace and environment and
   assert.equal((await action('agent-releases', {version:second.id,environment:'production'})).status,400);
   const dataset = await create('datasets', {name:'Release checks'});
   await create('examples', {dataset:dataset.id,input:'Question',expected:'Version two'});
+  const sourced = await create('examples', {dataset:dataset.id, input:'Redacted question', expected:'two',
+    match:'contains', source_trace:studio.data.id});
+  assert.equal(sourced.source_trace, studio.data.id);
+  assert.equal((await action('examples', {dataset:dataset.id, input:'Question', expected:'two',
+    source_trace:'missing'})).status, 400);
   const comparison = await create('agent-evaluations',
     {baseline:first.id,candidate:second.id,dataset:dataset.id,billing_key:key.id});
+  assert.equal(comparison.variants[1].results.find(result => result.example === sourced.id).source_trace, studio.data.id);
+  assert.equal(comparison.variants[1].results.find(result => result.example === sourced.id).passed, true);
   assert.deepEqual(comparison.variants.map(variant => [variant.version, variant.passed]), [[first.id,false], [second.id,true]]);
   assert.equal((await action('agent-releases', {version:first.id,environment:'production'})).status,400);
   const productionRelease = await create('agent-releases', {version:second.id,environment:'production'});
@@ -257,4 +267,27 @@ test('published Agent configuration is isolated by workspace and environment and
   await create('mcp-disconnect',{connection:git.id});
   assert.equal((await runDraft()).status,400);
   assert.deepEqual(githubCalls,['HEAD','GET','GET']);
+  const gateway = instances.get('browser:' + workspace).wecom;
+  gateway.socket = {};
+  gateway.status = 'connected';
+  const replies = [];
+  t.mock.method(gateway, 'reply', async (_socket, _request, _id, content, final) => {
+    if (final) replies.push(content);
+  });
+  const bot = {agent:agent.id, environment:'staging', botId:'fixture-bot'};
+  const wecomTurn = async (msgid, chattype, chatid, userid) => {
+    await gateway.onMessage(gateway.socket, bot, JSON.stringify({cmd:'aibot_msg_callback',
+      headers:{req_id:msgid}, body:{msgid, chattype, chatid, from:{userid}, text:{content:msgid}}}));
+    return (await request('/api/traces')).data.find(item => item.input === msgid);
+  };
+  const direct = await wecomTurn('direct-one', 'single', undefined, 'sender-one');
+  const followup = await wecomTurn('direct-two', 'single', undefined, 'sender-one');
+  const group = await wecomTurn('group-one', 'group', 'shared-chat', 'sender-one');
+  const groupFollowup = await wecomTurn('group-two', 'group', 'shared-chat', 'sender-two');
+  assert.match(direct.session_id, /^[0-9a-f]{64}$/);
+  assert.equal(direct.session_id, followup.session_id);
+  assert.equal(group.session_id, groupFollowup.session_id);
+  assert.notEqual(direct.session_id, group.session_id);
+  assert.equal(direct.delivery, 'replied');
+  assert.equal(direct.output, replies[0]);
 });

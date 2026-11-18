@@ -108,8 +108,18 @@ class Handler(SimpleHTTPRequestHandler):
             dataset = record_for('dataset', 'dataset')
             if 'input' not in data or 'expected' not in data:
                 raise ValueError('input and expected are required')
-            return self.save_record('example', {'dataset': dataset['id'], 'input': data['input'],
-                                                'expected': data['expected']})
+            example = {'dataset': dataset['id'], 'input': data['input'], 'expected': data['expected']}
+            if 'source_trace' in data:
+                with database() as connection:
+                    rows = connection.execute('SELECT payload FROM traces')
+                    if not any(json.loads(row[0])['id'] == data['source_trace'] for row in rows):
+                        raise ValueError('Trace was not found')
+                example['source_trace'] = data['source_trace']
+            if data.get('match') == 'contains':
+                if not isinstance(data['expected'], str) or not data['expected'].strip():
+                    raise ValueError('Enter the required text')
+                example['match'] = 'contains'
+            return self.save_record('example', example)
         if action == 'prompts':
             return self.save_record('prompt', {'name': required_text('name'),
                                                'template': required_text('template')})
