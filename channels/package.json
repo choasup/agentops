@@ -1,0 +1,7 @@
+{
+  "name": "agent-deck-wechat-gateway",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22.15"},
+  "dependencies": {"@wecom/aibot-node-sdk": "1.0.7"}
+}

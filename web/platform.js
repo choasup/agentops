@@ -12,7 +12,6 @@ const modules = {
   deployments: ['Deployments', 'Publish saved Agent versions by environment.'],
   agent: ['Agent', ''],
   'console-agents': ['Agents', 'Manage Agent versions, evaluations, and releases.'],
-  chat: ['Chat', 'Talk to an Agent.'],
   agents: ['All agents', 'Find your agents, check recent activity, and manage integrations.'],
   studio: ['Studio', 'Try a test message with a Studio agent or deployment.']
 };
@@ -29,9 +28,6 @@ const billingMoney = nanos => new Intl.NumberFormat('en-US', {
 }).format(nanos / 1e9);
 const registryFilters = {query:'', source:'', activity:'', sort:'recent'};
 let lastStudioTarget;
-let lastChatAgent;
-const chatSessions = new Map();
-const runningChats = new Set();
 let refreshWorkspaceView;
 document.addEventListener('tracesupdated', () => refreshWorkspaceView?.());
 
@@ -641,8 +637,6 @@ function renderModule(module, selectedTarget) {
     }
   }
 
-  if (module === 'chat') panels.push(agentChat());
-
   if (module === 'studio') {
     const targets = records.filter(record =>
       record.kind === 'deployment' || (record.kind === 'agent' && record.source !== 'external'));
@@ -883,8 +877,52 @@ function agentReleasePanels(agentId, section) {
     recordName(version.agent) + ' · ' + version.label, {id:version.id, model:version.model,
       max_tokens:version.max_tokens, instructions:version.instructions})));
   if (section === 'versions') return [save, history];
-  if (section === 'releases') return [publish, deployments];
+  if (section === 'releases') return [publish, deployments, channelPublishingPanel(agentId, active)];
   return [save, publish, deployments, history];
+}
+
+function channelPublishingPanel(agentId, releases) {
+  const channels = [
+    {name:'企业微信智能机器人', mode:'wecom', transport:'WebSocket · Bot ID + Secret'},
+    {name:'微信客服', mode:'wechat-kf', transport:'HTTPS · 加密回调'}
+  ];
+  const panel = listPanel('WeChat channels', [element('p',
+    'Connect a published Agent to WeCom or WeChat Customer Service using the gateway on your server.')]);
+  panel.classList.add('wide');
+  for (const channel of channels) {
+    const row = element('div', undefined, 'console-agent-row');
+    const info = element('div');
+    info.append(element('strong', channel.name), element('p', channel.transport));
+    const setup = iconButton('external', 'Set up', 'button');
+    const environments = ['production', 'staging'].filter(env => releases.has(agentId + ':' + env));
+    setup.disabled = !environments.length;
+    setup.setAttribute('aria-label', 'Set up ' + channel.name);
+    setup.addEventListener('click', () => {
+      const choice = field('environment', 'Environment', environments.map(env =>
+        [env, env === 'production' ? 'Production' : 'Staging']));
+      const select = choice.querySelector('select');
+      select.value = environments[0];
+      const command = element('pre');
+      const draw = () => {command.textContent = [
+        'export AGENT_DECK_AGENT_ID=' + agentId,
+        'export AGENT_DECK_ENVIRONMENT=' + select.value,
+        'node gateway.mjs ' + channel.mode
+      ].join('\n');};
+      select.addEventListener('change', draw);
+      draw();
+      const guide = element('a', 'Open gateway setup guide', 'button');
+      guide.href = 'https://github.com/choasup/agentops/tree/main/channels';
+      guide.target = '_blank';
+      guide.rel = 'noopener noreferrer';
+      openModal(channel.name, [element('p', channel.transport), choice,
+        element('p', 'Set the channel credentials and Agent Deck API key on your server, then start the gateway.'),
+        command, guide]);
+    });
+    row.append(info, setup);
+    panel.append(row);
+  }
+  if (!releases.size) panel.append(element('p', 'Publish to Staging or Production to set up a channel.'));
+  return panel;
 }
 
 function brandMark() {
@@ -1209,112 +1247,6 @@ function openAgentConfiguration(agent, afterSave) {
   }, true);
   byId('studio-config-body').replaceChildren(panel);
   dialog.showModal();
-}
-
-function agentChat() {
-  const panel = element('section', undefined, 'panel agent-chat wide');
-  const agents = ofKind('agent').filter(agent => agent.source !== 'external');
-  if (!agents.length) {
-    const link = iconButton('agents', 'Open All agents', 'button');
-    link.addEventListener('click', () => loadModule('agents'));
-    panel.append(element('h2', 'Create an Agent to start chatting'), link);
-    return panel;
-  }
-  const picker = field('chat-agent', 'Agent', agents.map(agent => [agent.id, agent.name]));
-  const select = picker.querySelector('select');
-  select.value = agents.some(agent => agent.id === lastChatAgent) ? lastChatAgent : agents[0].id;
-  const bar = element('header', undefined, 'agent-chat-bar');
-  const environment = element('span', undefined, 'pill');
-  const reset = iconButton('plus', 'New chat', 'button quiet');
-  bar.append(picker, environment, reset);
-  const stream = element('div', undefined, 'agent-chat-stream');
-  stream.setAttribute('role', 'log');
-  stream.setAttribute('aria-label', 'Conversation');
-  const form = element('form', undefined, 'agent-chat-form');
-  const message = field('chat-message', 'Message', 'textarea');
-  const input = message.querySelector('textarea');
-  input.rows = 2;
-  input.maxLength = 4000;
-  input.placeholder = 'Write a message…';
-  const send = iconButton('arrow', 'Send', 'button primary');
-  send.type = 'submit';
-  const status = element('p');
-  status.setAttribute('role', 'status');
-  form.append(message, send, status);
-  panel.append(bar, stream, form);
-  let pending = false;
-  const agent = () => agents.find(item => item.id === select.value);
-  const release = () => ['production', 'staging'].map(env => ofKind('agent_release').find(item =>
-    item.agent === agent().id && item.environment === env)).find(Boolean);
-  const sessionKey = () => agent().id + ':' + (release()?.id ?? 'draft');
-  const conversation = () => chatSessions.get(sessionKey()) ?? [];
-  const isRunning = () => pending || runningChats.has(sessionKey());
-  const updateButton = () => {send.disabled = isRunning() || !input.value.trim();};
-  function draw() {
-    lastChatAgent = agent().id;
-    const active = release();
-    environment.textContent = active?.environment === 'production' ? 'Production' :
-      active?.environment === 'staging' ? 'Staging' : 'Draft';
-    const entries = conversation();
-    stream.replaceChildren(...entries.map(entry => {
-      const item = element('article', undefined, 'agent-chat-message ' + entry.role);
-      item.append(element('strong', entry.role === 'user' ? 'You' : agent().name),
-        element('p', entry.content));
-      return item;
-    }));
-    if (!entries.length) stream.append(element('p', 'Start a conversation with ' + agent().name + '.'));
-    reset.disabled = isRunning() || !entries.length;
-    stream.scrollTop = stream.scrollHeight;
-    updateButton();
-  }
-  select.addEventListener('change', () => {
-    input.value = '';
-    status.textContent = '';
-    draw();
-  });
-  reset.addEventListener('click', () => {
-    chatSessions.delete(sessionKey());
-    input.value = '';
-    status.textContent = '';
-    draw();
-    input.focus();
-  });
-  input.addEventListener('input', updateButton);
-  form.addEventListener('submit', async event => {
-    event.preventDefault();
-    if (send.disabled || isRunning()) return;
-    const text = input.value.trim();
-    const key = sessionKey();
-    const active = release();
-    const entries = conversation();
-    const history = entries.slice(-12);
-    while (history.length && new TextEncoder().encode(JSON.stringify(history)).length > 20_000) history.splice(0, 2);
-    runningChats.add(key);
-    pending = select.disabled = true;
-    reset.disabled = true;
-    status.textContent = 'Waiting for ' + agent().name + '…';
-    updateButton();
-    try {
-      const result = await platformRequest('/runs', {
-        target:agent().id, target_kind:active ? 'agent_release' : 'agent',
-        ...(active ? {environment:active.environment} : {}), input:text, history
-      });
-      if (result.status === 'error') throw new Error(result.error ?? 'Agent run failed');
-      chatSessions.set(key, [...entries, {role:'user', content:text}, {role:'assistant', content:String(result.output)}]);
-      if (input.value.trim() === text) input.value = '';
-      status.textContent = '';
-      refresh();
-    } catch (error) {
-      status.textContent = error.message;
-    } finally {
-      runningChats.delete(key);
-      pending = select.disabled = false;
-      if (activeModule === 'chat') refreshWorkspaceView?.();
-    }
-  });
-  refreshWorkspaceView = () => {if (panel.isConnected) draw();};
-  draw();
-  return panel;
 }
 
 function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
@@ -1753,7 +1685,7 @@ async function loadModule(module, selectedTarget) {
   const request = ++moduleRequest;
   const currentRequest = () => request === moduleRequest && activeModule === module && !platformContent.hidden;
   activeModule = module;
-  if (['agent', 'agents', 'studio', 'chat', 'connections', 'skills'].includes(module)) showWorkspaceArea('home');
+  if (['agent', 'agents', 'studio', 'connections', 'skills'].includes(module)) showWorkspaceArea('home');
   else showWorkspaceArea('console');
   closeWorkspaceMenu();
   byId('tracing-content').hidden = true;

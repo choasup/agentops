@@ -654,19 +654,3 @@ dialog::backdrop {background: #111a3a70}
 .agent-api-example-controls {justify-content:space-between}
 .agent-api-example-controls [aria-pressed="true"] {background:var(--accent-soft); color:var(--accent-dark)}
 .agent-api-command {max-height:36dvh; overflow:auto}
-
-
-.agent-chat {display:grid; grid-template-rows:auto minmax(240px,1fr) auto; min-height:min(620px,78dvh); padding:0}
-.agent-chat-bar,.agent-chat-form {display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px 18px}
-.agent-chat-bar {border-bottom:1px solid var(--border)}
-.agent-chat-bar label {display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-weight:650}
-.agent-chat-bar > .button {margin-inline-start:auto}
-.agent-chat-stream {display:flex; flex-direction:column; align-items:flex-start; gap:14px; padding:20px 18px; max-height:55dvh; overflow:auto}
-.agent-chat-message {max-width:min(90%,72ch); border:1px solid var(--border); border-radius:12px; padding:8px 12px; overflow-wrap:anywhere}
-.agent-chat-message.user {align-self:flex-end; background:var(--accent-soft)}
-.agent-chat-message p {white-space:pre-wrap}
-.agent-chat-form {align-items:end; border-top:1px solid var(--border)}
-.agent-chat-form label {flex:1; min-width:180px; display:grid; gap:4px; font-weight:650}
-.agent-chat-form textarea {resize:vertical; font-weight:400}
-.agent-chat-form > p {width:100%; color:var(--muted)}
-.agent-chat-form > p:empty {display:none}

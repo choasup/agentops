@@ -61,9 +61,9 @@ Cloudflare Workers AI 测试连接使用独立的私有 Worker。新账号部署
 
 ## 开放平台
 
-### Home Chat
+### 企业微信与微信客服
 
-从 **Home → Chat** 选择 Agent 直接对话。优先使用当前发布的 Production，其次是 Staging，没有发布时使用 Draft。浏览器刷新会清空 Chat 会话，每轮运行仍有 Trace。调用 Agent API 时也可以在 `input` 之外传 `history`，最多六对 `user` / `assistant` 消息。
+在 **Console → Agents → Releases** 选择已发布的环境，在 **WeChat channels** 查看配置，并按 [网关部署说明](channels/README.md) 启动渠道网关。
 
 ### 发布 Agent 版本（Cloudflare）
 
