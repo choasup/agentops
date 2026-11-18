@@ -304,7 +304,33 @@ async function refresh() {
   }
 }
 
+let workspaceArea = 'home';
+
+function showWorkspaceArea(area) {
+  workspaceArea = area;
+  byId('workspace-area').textContent = area === 'home' ? 'Home' : 'Console';
+  document.querySelectorAll('[data-area-nav]').forEach(group => {
+    group.hidden = group.dataset.areaNav !== area;
+  });
+  document.querySelectorAll('[data-area-switch]').forEach(button => {
+    button.setAttribute('aria-pressed', String(button.dataset.areaSwitch === area));
+  });
+}
+
+document.querySelectorAll('[data-area-switch]').forEach(button => button.addEventListener('click', () => {
+  const area = button.dataset.areaSwitch;
+  if (area === workspaceArea) return;
+  if (area === 'home') loadModule('agents');
+  else document.querySelector('.nav[data-view="overview"]').click();
+}));
+
+function openConsoleTrace(trace) {
+  if (workspaceArea === 'home') document.querySelector('.nav[data-view="traces"]').click();
+  showTrace(trace);
+}
+
 document.querySelectorAll('.nav[data-view]').forEach(button => button.addEventListener('click', () => {
+  showWorkspaceArea('console');
   closeWorkspaceMenu();
   activeModule = null;
   byId('platform-content').hidden = true;

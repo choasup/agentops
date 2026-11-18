@@ -936,7 +936,7 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
       element('span', latency(run.duration) + ' · ' + number.format(run.tokens) + ' tokens', 'step-time'));
     const actions = element('div', undefined, 'section-actions');
     const inspect = iconButton('traces', 'View trace', 'button');
-    inspect.addEventListener('click', () => showTrace(run));
+    inspect.addEventListener('click', () => openConsoleTrace(run));
     const reuse = iconButton('copy', 'Reuse input', 'button quiet');
     reuse.addEventListener('click', () => {
       message.value = current().instructions && typeof run.input === 'string' ? run.input : JSON.stringify(run.input ?? null, null, 2);
@@ -1138,7 +1138,7 @@ function agentRegistry() {
         const inspect = element('button', timeLabel(usage.last), 'agent-name registry-run-link');
         inspect.type = 'button';
         inspect.setAttribute('aria-label', 'Open latest trace for ' + agent.name);
-        inspect.addEventListener('click', () => showTrace(latest));
+        inspect.addEventListener('click', () => openConsoleTrace(latest));
         runSummary.append(inspect, statusPill(runStatus(latest)));
       } else runSummary.textContent = tracesReady ? 'No runs yet' : '—';
       labels.append(element('p', modelName, 'registry-mobile-model'));
@@ -1186,6 +1186,8 @@ async function loadModule(module, selectedTarget) {
   const request = ++moduleRequest;
   const currentRequest = () => request === moduleRequest && activeModule === module && !platformContent.hidden;
   activeModule = module;
+  if (['agent', 'agents', 'studio'].includes(module)) showWorkspaceArea('home');
+  else if (!['models', 'billing'].includes(module)) showWorkspaceArea('console');
   closeWorkspaceMenu();
   byId('tracing-content').hidden = true;
   platformContent.hidden = false;

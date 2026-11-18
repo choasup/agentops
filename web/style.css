@@ -561,3 +561,11 @@ dialog::backdrop {background: #111a3a70}
 
 .agent-detail-nav {display:flex; flex-wrap:wrap; gap:6px; border-bottom:1px solid var(--border); padding-bottom:8px}
 .agent-detail-nav [aria-current="page"] {background:var(--accent-soft); color:var(--accent-dark)}
+
+.workspace-switch {display:grid; grid-template-columns:1fr 1fr; gap:4px; margin:0 4px 14px; padding:4px; border:1px solid var(--border); border-radius:9px; background:var(--canvas)}
+.workspace-switch button {min-height:32px; padding:4px 8px; border:1px solid transparent; border-radius:6px; background:transparent; color:var(--muted); font:inherit; font-size:13px; font-weight:650; cursor:pointer}
+.workspace-switch button[aria-pressed="true"] {border-color:var(--border); background:var(--surface); color:var(--accent-dark); box-shadow:0 1px 2px #1723450d}
+.workspace-switch button:hover:not([aria-pressed="true"]) {background:var(--accent-soft)}
+@media (max-width:760px) {
+  .workspace-switch {margin:0 0 6px; max-width:320px}
+}

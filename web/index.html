@@ -37,11 +37,16 @@
     <div class="brand"><img class="mark" src="mark.png" alt=""> Agent Deck</div>
     <button id="menu-toggle" class="button menu-toggle" type="button" aria-controls="workspace-nav" aria-expanded="false"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#menu"/></svg><span>Menu</span></button>
   </div>
+  <div class="workspace-switch" role="group" aria-label="Product area">
+    <button type="button" data-area-switch="home" aria-pressed="true">Home</button>
+    <button type="button" data-area-switch="console" aria-pressed="false">Console</button>
+  </div>
   <nav id="workspace-nav" aria-label="Workspace">
-    <div class="nav-label">Agent workspace</div>
+    <div data-area-nav="home">
     <button class="nav" data-module="agents"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#agents"/></svg><span>All agents</span></button>
     <button class="nav" data-module="studio"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#studio"/></svg><span>Studio</span></button>
-    <div class="nav-label group">Engineering</div>
+    </div>
+    <div data-area-nav="console" hidden>
     <button class="nav" data-view="overview"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#chart"/></svg><span>Dashboards</span></button>
     <button class="nav" data-view="traces"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#traces"/></svg><span>Traces</span></button>
     <button class="nav" data-module="feedback"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#review"/></svg><span>Review queue</span></button>
@@ -50,6 +55,7 @@
     <button class="nav" data-module="prompts"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#prompt"/></svg><span>Prompts</span></button>
     <button class="nav" data-module="playground"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#terminal"/></svg><span>Playground</span></button>
     <button class="nav" data-module="deployments"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#deploy"/></svg><span>Deployments</span></button>
+    </div>
     <div class="nav-label group">Workspace settings</div>
     <button class="nav" data-module="models"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#models"/></svg><span>Models</span></button>
     <button class="nav" data-module="billing" data-cloud hidden><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#wallet"/></svg><span>Billing</span></button>
@@ -58,7 +64,7 @@
 </aside>
 <main>
   <header class="top">
-    <span class="breadcrumb">Workspace <b aria-hidden="true">/</b> <strong id="crumb">All agents</strong></span>
+    <span class="breadcrumb"><span id="workspace-area">Home</span> <b aria-hidden="true">/</b> <strong id="crumb">All agents</strong></span>
     <div class="header-actions">
       <button id="account" class="button account-button" hidden>登录</button>
       <button id="connect" class="button primary"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#plus"/></svg><span>New agent</span></button>
