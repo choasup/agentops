@@ -227,6 +227,55 @@ function renderChart(scope) {
   }));
 }
 
+const sessionDate = new Intl.DateTimeFormat(undefined, {
+  month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'
+});
+const turnTime = new Intl.DateTimeFormat(undefined, {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+
+function sessionTurns(turns) {
+  const wrap = element('div', undefined, 'table-wrap session-turn-table');
+  const table = element('table');
+  table.setAttribute('aria-label', 'Session turns');
+  const headers = table.createTHead().insertRow();
+  for (const label of ['Time', 'Input', 'Response', 'Status', 'Usage', 'Trace']) {
+    const cell = element('th', label);
+    cell.scope = 'col';
+    headers.append(cell);
+  }
+  const body = table.createTBody();
+  function preview(value) {
+    return element('span', typeof value === 'string' ? value : value == null ? '—' : JSON.stringify(value),
+      'session-turn-preview');
+  }
+  for (const trace of [...turns].reverse()) {
+    const row = body.insertRow();
+    const time = element('time', turnTime.format(new Date(trace.at)));
+    time.dateTime = trace.at;
+    time.title = new Date(trace.at).toLocaleString();
+    row.insertCell().append(time);
+    row.insertCell().append(preview(trace.input));
+    row.insertCell().append(preview(trace.error ?? trace.output));
+    const status = row.insertCell();
+    status.append(statusPill(runStatus(trace)));
+    const delivery = deliveryLabel(trace);
+    if (delivery) {
+      const short = {replied:'Delivered', fallback_replied:'Fallback sent', reply_failed:'Delivery failed'};
+      const label = element('small', short[trace.delivery] ?? 'Unconfirmed', 'session-delivery');
+      label.title = delivery;
+      status.append(label);
+    }
+    const usage = row.insertCell();
+    usage.append(element('span', latency(trace.duration) + ' · ' + number.format(trace.tokens) + ' tokens'),
+      element('small', typeof trace.cost_nanos === 'number' ? billingMoney(trace.cost_nanos) : money(trace.cost)));
+    const open = element('button', 'Open', 'button quiet');
+    open.setAttribute('aria-label', 'View trace at ' + time.textContent);
+    open.addEventListener('click', () => showTrace(trace));
+    row.insertCell().append(open);
+  }
+  wrap.append(table);
+  return wrap;
+}
+
 function renderSessions(scope, matches) {
   const sessions = new Map();
   const matching = new Set(matches.map(trace => trace.session_id).filter(Boolean));
@@ -242,34 +291,33 @@ function renderSessions(scope, matches) {
     list.replaceChildren(element('p', 'No matching sessions.', 'empty'), notice);
     return;
   }
+  if (openSession === undefined && sessions.size === 1) openSession = sessions.keys().next().value;
   list.replaceChildren(...[...sessions].map(([id, turns]) => {
     const latest = turns[0];
     const section = element('details', undefined, 'trace-session');
     const heading = element('summary');
-    const preview = typeof latest.input === 'string' ? latest.input.trim().slice(0, 100) : latest.name;
-    heading.append(element('strong', preview || latest.name),
-      element('span', [latest.name, latest.channel === 'wecom' ? 'WeCom' : latest.channel,
-        latest.environment, turns.length + (turns.length === 1 ? ' turn' : ' turns'),
-        new Date(latest.at).toLocaleString()].filter(Boolean).join(' · ')));
+    const preview = typeof latest.input === 'string' ? latest.input.trim() : '';
+    const identity = element('span', undefined, 'session-identity');
+    identity.append(element('strong', latest.name), ...(preview ? [element('span', preview)] : []));
+    const context = element('span', [latest.channel === 'wecom' ? 'WeCom' : latest.channel,
+      latest.environment].filter(Boolean).join(' · '), 'session-context');
+    const errors = turns.filter(trace => runStatus(trace) === 'error' || trace.delivery === 'reply_failed').length;
+    const count = element('span', turns.length + (turns.length === 1 ? ' turn' : ' turns'), 'session-count');
+    if (errors) count.append(element('span', errors + (errors === 1 ? ' issue' : ' issues'), 'pill error'));
+    const date = element('time', sessionDate.format(new Date(latest.at)));
+    date.dateTime = latest.at;
+    heading.append(identity, context, count, date);
     section.open = openSession === id;
-    heading.addEventListener('click', () => {openSession = section.open ? undefined : id;});
+    heading.addEventListener('click', () => {openSession = section.open ? null : id;});
     section.name = 'trace-session';
-    const timeline = element('ol', undefined, 'trace-session-turns');
-    for (const trace of [...turns].reverse()) {
-      const turn = element('li');
-      const open = element('button', 'View trace', 'button');
-      open.addEventListener('click', () => showTrace(trace));
-      const top = element('div', undefined, 'trace-mode');
-      top.append(element('time', new Date(trace.at).toLocaleString()), statusPill(runStatus(trace)));
-      if (deliveryLabel(trace)) top.append(element('span', deliveryLabel(trace), 'pill'));
-      top.append(open);
-      turn.append(top, payload('Input', trace.input),
-        payload(trace.error ? 'Error' : 'Response', trace.error ?? trace.output));
-      timeline.append(turn);
-    }
-    section.append(heading, timeline);
+    section.append(heading);
+    const renderTurns = () => {
+      if (section.open && section.childElementCount === 1) section.append(sessionTurns(turns));
+    };
+    section.addEventListener('toggle', renderTurns);
+    renderTurns();
     return section;
-  }), notice);
+  }));
 }
 
 function updateTraceProjects() {
@@ -412,7 +460,7 @@ document.querySelectorAll('.nav[data-view]').forEach(button => button.addEventLi
   byId('overview').hidden = !overview;
   byId('crumb').textContent = overview ? 'Dashboards' : 'Traces';
   byId('title').textContent = overview ? 'Observability' : 'Traces';
-  byId('description').textContent = overview ? 'Monitor performance and debug your agent runs.' : 'Search runs and inspect execution steps.';
+  byId('description').textContent = overview ? 'Monitor performance and debug your agent runs.' : '';
   document.querySelector('.table-panel h2').textContent = overview ? 'Recent traces' : 'Trace explorer';
   render();
   refresh();

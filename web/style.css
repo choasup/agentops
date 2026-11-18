@@ -688,11 +688,35 @@ dialog::backdrop {background: #111a3a70}
 .trace-mode .button {min-height:32px; padding:5px 10px; font-size:12px}
 .trace-mode .button[aria-pressed="true"] {background:var(--panel-tint, #edf0ff); color:var(--primary, #303ddb)}
 .trace-session {border-top:1px solid var(--border)}
-.trace-session > summary {cursor:pointer; padding:14px 18px}
-.trace-session > summary > span {display:block; margin:4px 0 0 16px; color:var(--muted); font-size:12px}
-.trace-session-turns {margin:0; padding:0 18px 14px; list-style:none}
-.trace-session-turns > li {padding:12px 14px; border:1px solid var(--border); border-radius:8px; margin-top:8px}
-.trace-session-turns time {font-size:12px; color:var(--muted)}
-.trace-session-turns .button {margin-left:auto}
-.trace-session-turns .modal-section pre, .trace-sample-output pre {white-space:pre-wrap; overflow-wrap:anywhere}
+.trace-session > summary {display:grid; grid-template-columns:minmax(0,1fr) auto auto auto; align-items:center; gap:16px; padding:10px 16px; cursor:pointer; list-style:none}
+.trace-session > summary::-webkit-details-marker {display:none}
+.trace-session > summary:hover, .trace-session[open] > summary {background:#f7f8fc}
+.session-identity {display:flex; align-items:baseline; gap:9px; min-width:0}
+.session-identity::before {content:"›"; flex:none; color:var(--muted)}
+.trace-session[open] .session-identity::before {transform:rotate(90deg)}
+.session-identity strong, .session-identity span {overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.session-identity strong {flex-shrink:0; max-width:55%}
+.session-identity span, .session-context, .session-count, .trace-session time {font-size:12px; color:var(--muted)}
+.session-count {display:flex; align-items:center; gap:6px}
+.session-turn-table table {min-width:670px; table-layout:fixed}
+.session-turn-table th, .session-turn-table td {padding:7px 10px; text-align:left}
+.session-turn-table th:first-child, .session-turn-table td:first-child {width:88px; padding-left:16px}
+.session-turn-table th:nth-child(4) {width:105px}
+.session-turn-table th:nth-child(5) {width:124px}
+.session-turn-table th:last-child {width:62px}
+.session-turn-table tbody tr:last-child td {border-bottom:0}
+.session-turn-table td {vertical-align:middle; font-size:12px}
+.session-turn-table td small {display:block; color:var(--muted); margin-top:2px}
+.session-turn-table .pill {font-size:11px; padding:2px 6px}
+.session-turn-table .button {min-height:26px; padding:2px 4px; font-size:12px}
+.session-turn-preview {display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow-wrap:anywhere; white-space:pre-line; line-height:1.4}
+.trace-sample-output pre {white-space:pre-wrap; overflow-wrap:anywhere}
+#tracing-content #description:empty {display:none}
+.table-panel:has(#trace-mode:not([hidden])) > .panel-head {padding:10px 16px}
+@media (max-width:680px) {
+  .trace-session > summary {grid-template-columns:minmax(0,1fr) auto; gap:4px 8px}
+  .session-identity {grid-column:1/-1}
+  .session-context {grid-column:1}
+  .trace-session > summary > time {grid-column:1/-1}
+}
 .trace-sample-output {margin-bottom:12px}
