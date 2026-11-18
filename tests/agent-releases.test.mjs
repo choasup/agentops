@@ -299,24 +299,50 @@ test('published Agent configuration is isolated by workspace and environment and
   ]);
   assert.equal(gateway.diagnostics.length, 9);
   await gateway.ctx.storage.put('wecom-bot', bot);
-  const discovery = await create('wecom-topic-discover', {agent:agent.id, marker:'DISCOVER-42'});
-  const callsBeforeDiscovery = modelCalls.length;
-  await gateway.onMessage(gateway.socket, bot, JSON.stringify({cmd:'aibot_msg_callback',
-    headers:{req_id:'discovery-request'}, body:{msgid:'discovery-message', msgtype:'text',
-      text:{content:'@Bot DISCOVER-42'}, compat_info:{source:'channel', channel:{topic_id:'fixture-topic'}}}}));
-  const discovered = (await request('/api/platform/wecom-status')).data.topicDiscovery;
-  assert.deepEqual(discovered, {id:discovery.id, state:'found', topicId:'fixture-topic'});
-  assert.equal(modelCalls.length, callsBeforeDiscovery);
+  let mentionReads = 0;
   const socket = {send(raw) {
     const request = JSON.parse(raw);
-    assert.equal(request.cmd, 'aibot_topic_get_post_list');
     assert.equal(request.body.topic_id, 'fixture-topic');
-    assert.equal(request.body.limit, 5);
-    assert.equal(request.body.end_time - request.body.begin_time, 900);
-    queueMicrotask(() => gateway.onMessage(socket, bot, JSON.stringify({headers:request.headers,
-      errcode:0, body:{post_list:[{content:'test-MARKER-42', inline_file_list:[{cookie_value:'private fixture'}]}]}})));
+    const mention = request.body.type === undefined;
+    if (mention) {
+      mentionReads++;
+      if (request.cmd === 'aibot_topic_get_reply_list') {
+        assert.deepEqual(request.body.reply_id_list, ['pairing-reply']);
+        assert.equal(request.body.post_id, 'pairing-post');
+      } else {
+        assert.equal(request.cmd, 'aibot_topic_get_post_list');
+        assert.deepEqual(request.body.post_id_list, ['pairing-post']);
+      }
+    } else {
+      assert.equal(request.cmd, 'aibot_topic_get_post_list');
+      assert.equal(request.body.limit, 5);
+      assert.equal(request.body.end_time - request.body.begin_time, 900);
+    }
+    const body = request.cmd === 'aibot_topic_get_reply_list'
+      ? {reply_list:[{reply_id:'pairing-reply', content:'DISCOVER-43'}]}
+      : {post_list:mention ? [{post_id:'pairing-post', content:'DISCOVER-42'}]
+        : [{content:'test-MARKER-42', inline_file_list:[{cookie_value:'private fixture'}]}]};
+    queueMicrotask(() => gateway.onMessage(socket, bot, JSON.stringify({headers:request.headers, errcode:0, body})));
   }};
   gateway.socket = socket;
+  const discovery = await create('wecom-topic-discover', {agent:agent.id, marker:'DISCOVER-42'});
+  const callsBeforeDiscovery = modelCalls.length;
+  await gateway.onMessage(socket, bot, JSON.stringify({cmd:'aibot_msg_callback',
+    headers:{req_id:'discovery-compat'}, body:{msgid:'discovery-text', msgtype:'text',
+      text:{content:'@Bot DISCOVER-42'}}}));
+  assert.equal((await request('/api/platform/wecom-status')).data.topicDiscovery.state, 'waiting');
+  const mentionEvent = (msgid, reply_id) => JSON.stringify({cmd:'aibot_topic_event_callback',
+    headers:{req_id:'discovery-request'}, body:{msgid, msgtype:'event', aibotid:bot.botId, topic_id:'fixture-topic',
+      event:{eventtype:'topic_at_bot', topic_at_bot:{post_id:'pairing-post', reply_id}}}});
+  await gateway.onMessage(socket, bot, mentionEvent('discovery-post'));
+  const discovered = (await request('/api/platform/wecom-status')).data.topicDiscovery;
+  assert.deepEqual(discovered, {id:discovery.id, state:'found', topicId:'fixture-topic'});
+  await create('wecom-topic-discover', {agent:agent.id, marker:'DISCOVER-43'});
+  await gateway.onMessage(socket, bot, mentionEvent('discovery-post'));
+  assert.equal(mentionReads, 1);
+  await gateway.onMessage(socket, bot, mentionEvent('discovery-reply', 'pairing-reply'));
+  assert.equal((await request('/api/platform/wecom-status')).data.topicDiscovery.state, 'found');
+  assert.equal(modelCalls.length, callsBeforeDiscovery);
   const access = await create('wecom-topic-probe', {agent:agent.id, topic_id:'fixture-topic', marker:'MARKER-42'});
   assert.deepEqual(access, {state:'matched', checked:1, has_more:false});
   assert.deepEqual(gateway.diagnostics.at(-1), {event:'topic_posts', result:'matched'});

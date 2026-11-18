@@ -1,5 +1,8 @@
 // One outbound WeCom connection per workspace. Storage alarms recover it after eviction.
 const configKey = 'wecom-bot';
+const topicEventCommand = 'aibot_topic_event_callback';
+const validTopicId = value => typeof value === 'string' && value.length > 0 &&
+  new TextEncoder().encode(value).length <= 128;
 const messageTypes = new Set(['text', 'image', 'voice', 'video', 'file', 'mixed', 'markdown', 'location', 'link']);
 export class WeComGateway {
   constructor(ctx, decrypt, run, recordDelivery) {
@@ -138,20 +141,52 @@ export class WeComGateway {
     return {state:'waiting', id};
   }
 
-  inspectTopic(body) {
+  waitingForTopic() {
     const discovery = this.topicDiscovery;
-    if (discovery?.state !== 'waiting' || discovery.expires <= Date.now() ||
-        typeof body?.text?.content !== 'string' || !body.text.content.includes(discovery.marker)) return;
-    const info = body.compat_info;
-    const id = info?.source === 'channel' && (info.channel?.topic_id ?? info.topic_id ?? body.topic_id);
-    if (typeof id === 'string' && id && new TextEncoder().encode(id).length <= 128) {
-      discovery.topicId = id;
-      discovery.state = 'found';
-    } else {
-      discovery.state = 'missing';
+    return discovery?.state === 'waiting' && discovery.expires > Date.now() ? discovery : undefined;
+  }
+
+  async onTopicEvent(socket, config, body) {
+    if (body?.msgtype !== 'event' || body.event?.eventtype !== 'topic_at_bot') {
+      return this.diagnostic('topic_event', 'ignored');
     }
-    delete discovery.marker;
-    return true;
+    const discovery = this.waitingForTopic();
+    if (!discovery || this.status !== 'connected') return this.diagnostic('topic_at_bot', 'no_pending_setup');
+    const {post_id:postId, reply_id:replyId} = body.event.topic_at_bot ?? {};
+    const topicId = body.topic_id;
+    if (body.aibotid !== config.botId || !validTopicId(topicId) || !validTopicId(postId) ||
+        (replyId !== undefined && !validTopicId(replyId)) || typeof body.msgid !== 'string' || !body.msgid) {
+      return this.diagnostic('topic_at_bot', 'invalid_event');
+    }
+    const key = 'topic:' + body.msgid;
+    if (this.seen.has(key)) return this.diagnostic('topic_at_bot', 'duplicate');
+    this.remember(key);
+    const target = replyId
+      ? {command:'aibot_topic_get_reply_list', body:{topic_id:topicId, post_id:postId, reply_id_list:[replyId]},
+        list:'reply_list', id:'reply_id', value:replyId}
+      : {command:'aibot_topic_get_post_list', body:{topic_id:topicId, post_id_list:[postId]},
+        list:'post_list', id:'post_id', value:postId};
+    let frame;
+    try {
+      frame = await this.request(socket, target.command, 'topic_mention_' + crypto.randomUUID(), target.body);
+    } catch {
+      return this.diagnostic('topic_at_bot', 'no_response');
+    }
+    if (this.socket !== socket || this.waitingForTopic() !== discovery) return;
+    if (frame.errcode !== 0) return this.diagnostic('topic_at_bot', 'rejected');
+    const entries = frame.body?.[target.list];
+    if (!Array.isArray(entries)) return this.diagnostic('topic_at_bot', 'invalid_response');
+    const found = entries.some(entry => entry?.[target.id] === target.value && !entry.is_recalled &&
+      typeof entry.content === 'string' && entry.content.includes(discovery.marker));
+    if (!found) return this.diagnostic('topic_at_bot', 'marker_not_found');
+    discovery.topicId = topicId;
+    discovery.state = 'found';
+    this.diagnostic('topic_discovery', 'found');
+  }
+
+  remember(key) {
+    this.seen.set(key, true);
+    if (this.seen.size > 2048) this.seen.delete(this.seen.keys().next().value);
   }
 
   async readTopicPosts(topicId, expectedBotId) {
@@ -208,6 +243,7 @@ export class WeComGateway {
     const type = frame?.body?.msgtype;
     const event = frame?.cmd === 'aibot_msg_callback'
       ? 'message:' + (messageTypes.has(type) ? type : 'other')
+      : frame?.cmd === topicEventCommand ? 'topic_event'
       : frame?.cmd === 'aibot_event_callback' ? 'event_callback' : 'other_frame';
     const request = frame?.headers?.req_id;
     if (typeof request !== 'string') return this.diagnostic(event, 'missing_request');
@@ -222,6 +258,7 @@ export class WeComGateway {
       if (frame.errcode === 0) this.lastAck = Date.now();
       return this.diagnostic('heartbeat', frame.errcode === 0 ? 'accepted' : 'rejected');
     }
+    if (frame.cmd === topicEventCommand) return this.onTopicEvent(socket, config, frame.body);
     if (frame.cmd !== 'aibot_msg_callback') {
       const pending = this.pendingReplies.get(request);
       if (pending?.socket === socket && Number.isInteger(frame.errcode)) {
@@ -236,9 +273,11 @@ export class WeComGateway {
     const key = frame.body?.msgid ?? request;
     if (typeof text !== 'string' || !text.trim()) return this.diagnostic(event, 'no_supported_text');
     if (this.seen.has(key)) return this.diagnostic(event, 'duplicate');
-    this.seen.set(key, true);
-    if (this.seen.size > 2048) this.seen.delete(this.seen.keys().next().value);
-    if (this.inspectTopic(frame.body)) return this.diagnostic('topic_discovery', this.topicDiscovery.state);
+    this.remember(key);
+    const discovery = this.topicDiscovery;
+    if (discovery?.expires > Date.now() && text.includes(discovery.marker)) {
+      return this.diagnostic('topic_discovery', 'waiting_for_topic_event');
+    }
     this.diagnostic(event, 'accepted');
     const id = crypto.randomUUID();
     this.latestMessage = key;
