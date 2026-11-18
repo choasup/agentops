@@ -366,7 +366,7 @@ export class Workspace extends DurableObject {
     return this.saveTrace(trace);
   }
 
-  async execute(prompt, value, instructions, provider, maxTokens) {
+  async execute(prompt, value, instructions, provider, maxTokens, history = []) {
     let content = value;
     if (instructions) {
       if (typeof value !== 'string' || !value.trim()) throw new InputError('Enter a message');
@@ -384,7 +384,7 @@ export class Workspace extends DurableObject {
     }
     const endpoint = provider?.url ?? this.env.TRACE_STUDIO_MODEL_URL;
     if (!endpoint) throw new InputError('Model URL is missing');
-    const messages = [{role:'user', content}];
+    const messages = [...history, {role:'user', content}];
     if (instructions) messages.unshift({role:'system', content:instructions});
     const headers = {'Content-Type':'application/json'};
     const apiKey = provider?.encrypted_key
@@ -653,15 +653,23 @@ export class Workspace extends DurableObject {
         await this.verifyVersionModel(records, version);
         target = {...version, id:agent.id, identifier:agent.identifier};
       }
+      const history = data.history === undefined ? [] : data.history;
+      if (data.history !== undefined && (kind === 'deployment' || !Array.isArray(history) ||
+        history.length > 12 || history.length % 2 || !history.every((message, index) =>
+          message?.role === (index % 2 ? 'assistant' : 'user') && typeof message.content === 'string' &&
+          (index % 2 || message.content.trim())) || new TextEncoder().encode(JSON.stringify(history)).length > 20_000)) {
+        throw new InputError('Use up to six complete user and assistant turns in history');
+      }
+      const previousMessages = history.map(({role, content}) => ({role, content}));
       const attribution = release ? {environment:release.environment, agent_version:release.version,
         agent_release:release.id} : {environment:'local'};
       if (target.source === 'external') throw new InputError('External agents run in your application');
       if (target.provider === hostedProviderId) {
         if (typeof data.input !== 'string' || !data.input.trim()) throw new InputError('Enter a test message');
-        const billingKey = studioSession && kind === 'agent' && data.billing_key == null
+        const billingKey = studioSession && (kind === 'agent' || data.history !== undefined) && data.billing_key == null
           ? null : this.billableKey(data.billing_key);
         return this.billing.complete({model:hostedModel, messages:[
-          {role:'system', content:target.instructions}, {role:'user', content:data.input}
+          {role:'system', content:target.instructions}, ...previousMessages, {role:'user', content:data.input}
         ], max_tokens:target.max_tokens}, billingKey, target, attribution,
         this.assignedReadTool(records, target, data.input), this.resolveSkill(records, target));
       }
@@ -673,7 +681,7 @@ export class Workspace extends DurableObject {
       const start = performance.now();
       let tokens = 0;
       try {
-        const result = await this.execute(prompt, data.input, target.instructions, provider, target.max_tokens);
+        const result = await this.execute(prompt, data.input, target.instructions, provider, target.max_tokens, previousMessages);
         step.output = result.output;
         tokens = result.tokens;
         if (model) step.tokens = tokens;

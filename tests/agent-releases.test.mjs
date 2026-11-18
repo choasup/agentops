@@ -173,6 +173,15 @@ test('published Agent configuration is isolated by workspace and environment and
   assert.equal(staged.data.agent_version,first.id);
   assert.equal(staged.data.environment,'staging');
   assert.equal(modelCalls.at(-1).max_tokens,80);
+  const chatPayload = {target_kind:'agent_release',target:agent.id,environment:'staging',input:'Follow-up',
+    history:[{role:'user',content:'Question'},{role:'assistant',content:'Previous answer'}]};
+  const chat = await action('runs', chatPayload, {extraHeaders:{Origin:origin}});
+  assert.equal(chat.status,201);
+  assert.equal(chat.data.key_id,null);
+  assert.equal(chat.data.agent_version,first.id);
+  assert.deepEqual(modelCalls.at(-1).messages.slice(1), [...chatPayload.history,{role:'user',content:'Follow-up'}]);
+  assert.equal((await action('runs', {...chatPayload, history:[{role:'system',content:'Invalid'}]})).status,400);
+  assert.equal((await action('runs', chatPayload, {token:runOnly.token})).status,403);
   const production = await run('production');
   assert.equal(production.data.output,'Version two');
   assert.equal(modelCalls.at(-1).max_tokens,40);

@@ -61,6 +61,10 @@ Cloudflare Workers AI 测试连接使用独立的私有 Worker。新账号部署
 
 ## 开放平台
 
+### Home Chat
+
+从 **Home → Chat** 选择 Agent 直接对话。优先使用当前发布的 Production，其次是 Staging，没有发布时使用 Draft。浏览器刷新会清空 Chat 会话，每轮运行仍有 Trace。调用 Agent API 时也可以在 `input` 之外传 `history`，最多六对 `user` / `assistant` 消息。
+
 ### 发布 Agent 版本（Cloudflare）
 
 在 Studio Agent 页面点 **Use Agent**，选择 Draft、已发布的 Staging 或 Production，即可复制调用示例并查看 API Key 所需权限。Draft 调用使用当前 Studio 配置。生产集成可以绑定到已发布的环境。
@@ -109,7 +113,7 @@ node agentdeck.mjs agents list
 
 ### DeepSeek 托管 API
 
-通过 `npx wrangler secret put DEEPSEEK_API_KEY` 为 Worker 配置平台的 DeepSeek 密钥。用户创建带 **Call hosted models** 权限的 Agent Deck Key 后可直接调用。登录后在 Studio 试跑直接从工作区余额扣费，账单标为 **Studio test**。
+通过 `npx wrangler secret put DEEPSEEK_API_KEY` 为 Worker 配置平台的 DeepSeek 密钥。用户创建带 **Call hosted models** 权限的 Agent Deck Key 后可直接调用。登录后在 Studio 试跑直接从工作区余额扣费，账单标为 **Workspace run**。
 
 ```sh
 curl https://agentdeck.cloudmoro.com/v1/chat/completions \

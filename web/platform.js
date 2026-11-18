@@ -12,6 +12,7 @@ const modules = {
   deployments: ['Deployments', 'Publish saved Agent versions by environment.'],
   agent: ['Agent', ''],
   'console-agents': ['Agents', 'Manage Agent versions, evaluations, and releases.'],
+  chat: ['Chat', 'Talk to an Agent.'],
   agents: ['All agents', 'Find your agents, check recent activity, and manage integrations.'],
   studio: ['Studio', 'Try a test message with a Studio agent or deployment.']
 };
@@ -28,6 +29,9 @@ const billingMoney = nanos => new Intl.NumberFormat('en-US', {
 }).format(nanos / 1e9);
 const registryFilters = {query:'', source:'', activity:'', sort:'recent'};
 let lastStudioTarget;
+let lastChatAgent;
+const chatSessions = new Map();
+const runningChats = new Set();
 let refreshWorkspaceView;
 document.addEventListener('tracesupdated', () => refreshWorkspaceView?.());
 
@@ -85,7 +89,7 @@ function billingPanels() {
     const item = element('div', undefined, 'billing-entry');
     const key = apiKeys.find(key => key.id === entry.key_id);
     const usage = Boolean(entry.model);
-    const label = usage ? (key?.name ?? (entry.key_id ? 'API key' : 'Studio test')) + ' · ' + entry.model :
+    const label = usage ? (key?.name ?? (entry.key_id ? 'API key' : 'Workspace run')) + ' · ' + entry.model :
       entry.reference.startsWith('test-credit:') ? 'Test credit' : 'Top-up';
     item.append(
       element('strong', label),
@@ -636,6 +640,8 @@ function renderModule(module, selectedTarget) {
       }
     }
   }
+
+  if (module === 'chat') panels.push(agentChat());
 
   if (module === 'studio') {
     const targets = records.filter(record =>
@@ -1205,6 +1211,112 @@ function openAgentConfiguration(agent, afterSave) {
   dialog.showModal();
 }
 
+function agentChat() {
+  const panel = element('section', undefined, 'panel agent-chat wide');
+  const agents = ofKind('agent').filter(agent => agent.source !== 'external');
+  if (!agents.length) {
+    const link = iconButton('agents', 'Open All agents', 'button');
+    link.addEventListener('click', () => loadModule('agents'));
+    panel.append(element('h2', 'Create an Agent to start chatting'), link);
+    return panel;
+  }
+  const picker = field('chat-agent', 'Agent', agents.map(agent => [agent.id, agent.name]));
+  const select = picker.querySelector('select');
+  select.value = agents.some(agent => agent.id === lastChatAgent) ? lastChatAgent : agents[0].id;
+  const bar = element('header', undefined, 'agent-chat-bar');
+  const environment = element('span', undefined, 'pill');
+  const reset = iconButton('plus', 'New chat', 'button quiet');
+  bar.append(picker, environment, reset);
+  const stream = element('div', undefined, 'agent-chat-stream');
+  stream.setAttribute('role', 'log');
+  stream.setAttribute('aria-label', 'Conversation');
+  const form = element('form', undefined, 'agent-chat-form');
+  const message = field('chat-message', 'Message', 'textarea');
+  const input = message.querySelector('textarea');
+  input.rows = 2;
+  input.maxLength = 4000;
+  input.placeholder = 'Write a message…';
+  const send = iconButton('arrow', 'Send', 'button primary');
+  send.type = 'submit';
+  const status = element('p');
+  status.setAttribute('role', 'status');
+  form.append(message, send, status);
+  panel.append(bar, stream, form);
+  let pending = false;
+  const agent = () => agents.find(item => item.id === select.value);
+  const release = () => ['production', 'staging'].map(env => ofKind('agent_release').find(item =>
+    item.agent === agent().id && item.environment === env)).find(Boolean);
+  const sessionKey = () => agent().id + ':' + (release()?.id ?? 'draft');
+  const conversation = () => chatSessions.get(sessionKey()) ?? [];
+  const isRunning = () => pending || runningChats.has(sessionKey());
+  const updateButton = () => {send.disabled = isRunning() || !input.value.trim();};
+  function draw() {
+    lastChatAgent = agent().id;
+    const active = release();
+    environment.textContent = active?.environment === 'production' ? 'Production' :
+      active?.environment === 'staging' ? 'Staging' : 'Draft';
+    const entries = conversation();
+    stream.replaceChildren(...entries.map(entry => {
+      const item = element('article', undefined, 'agent-chat-message ' + entry.role);
+      item.append(element('strong', entry.role === 'user' ? 'You' : agent().name),
+        element('p', entry.content));
+      return item;
+    }));
+    if (!entries.length) stream.append(element('p', 'Start a conversation with ' + agent().name + '.'));
+    reset.disabled = isRunning() || !entries.length;
+    stream.scrollTop = stream.scrollHeight;
+    updateButton();
+  }
+  select.addEventListener('change', () => {
+    input.value = '';
+    status.textContent = '';
+    draw();
+  });
+  reset.addEventListener('click', () => {
+    chatSessions.delete(sessionKey());
+    input.value = '';
+    status.textContent = '';
+    draw();
+    input.focus();
+  });
+  input.addEventListener('input', updateButton);
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (send.disabled || isRunning()) return;
+    const text = input.value.trim();
+    const key = sessionKey();
+    const active = release();
+    const entries = conversation();
+    const history = entries.slice(-12);
+    while (history.length && new TextEncoder().encode(JSON.stringify(history)).length > 20_000) history.splice(0, 2);
+    runningChats.add(key);
+    pending = select.disabled = true;
+    reset.disabled = true;
+    status.textContent = 'Waiting for ' + agent().name + '…';
+    updateButton();
+    try {
+      const result = await platformRequest('/runs', {
+        target:agent().id, target_kind:active ? 'agent_release' : 'agent',
+        ...(active ? {environment:active.environment} : {}), input:text, history
+      });
+      if (result.status === 'error') throw new Error(result.error ?? 'Agent run failed');
+      chatSessions.set(key, [...entries, {role:'user', content:text}, {role:'assistant', content:String(result.output)}]);
+      if (input.value.trim() === text) input.value = '';
+      status.textContent = '';
+      refresh();
+    } catch (error) {
+      status.textContent = error.message;
+    } finally {
+      runningChats.delete(key);
+      pending = select.disabled = false;
+      if (activeModule === 'chat') refreshWorkspaceView?.();
+    }
+  });
+  refreshWorkspaceView = () => {if (panel.isConnected) draw();};
+  draw();
+  return panel;
+}
+
 function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
   if (!targets.length) {
     const panel = element('section', undefined, 'panel agent-empty wide');
@@ -1641,7 +1753,7 @@ async function loadModule(module, selectedTarget) {
   const request = ++moduleRequest;
   const currentRequest = () => request === moduleRequest && activeModule === module && !platformContent.hidden;
   activeModule = module;
-  if (['agent', 'agents', 'studio', 'connections', 'skills'].includes(module)) showWorkspaceArea('home');
+  if (['agent', 'agents', 'studio', 'chat', 'connections', 'skills'].includes(module)) showWorkspaceArea('home');
   else showWorkspaceArea('console');
   closeWorkspaceMenu();
   byId('tracing-content').hidden = true;

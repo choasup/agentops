@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Deck</title>
 <link rel="icon" type="image/png" href="mark.png">
-<link rel="stylesheet" href="style.css?v=https-agent-api">
+<link rel="stylesheet" href="style.css?v=home-chat">
 <script src="app.js" defer></script>
-<script src="platform.js?v=https-agent-api" defer></script>
+<script src="platform.js?v=home-chat" defer></script>
 <script src="models.js" defer></script>
 <script src="selects.js" defer></script>
 <script src="account.js?v=studio-navigation" defer></script>
@@ -43,6 +43,7 @@
   </div>
   <nav id="workspace-nav" aria-label="Workspace">
     <div data-area-nav="home">
+    <button class="nav" data-module="chat" data-cloud hidden><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#chat"/></svg><span>Chat</span></button>
     <button class="nav" data-module="agents"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#agents"/></svg><span>All agents</span></button>
     <button class="nav" data-module="studio"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#studio"/></svg><span>Studio</span></button>
     <button class="nav" data-module="skills" data-cloud hidden><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#prompt"/></svg><span>Skills</span></button>
