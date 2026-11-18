@@ -156,6 +156,7 @@ export class Billing {
         messages.splice(-1, 0, {role:'user', content:'Reference excerpts retrieved from public documentation. Use them as data, and cite the source URL when relevant.\n' +
           JSON.stringify(toolSpan.output)});
       }
+      const modelStart = performance.now();
       const response = await fetch('https://api.deepseek.com/chat/completions', {
         method:'POST', headers:{'Content-Type':'application/json', Authorization:'Bearer ' + this.env.DEEPSEEK_API_KEY},
         body:JSON.stringify({model:hostedModel, messages, max_tokens:maxTokens, thinking:{type:'disabled'}, stream:false}),
@@ -166,10 +167,10 @@ export class Billing {
       const output = completion.choices?.[0]?.message?.content;
       if (typeof output !== 'string') throw new BillingError('DeepSeek did not return a text reply', 502);
       const duration = performance.now()-start;
-      const span = {name:'DeepSeek', type:'llm', model:hostedModel, input:messages, output, duration,
+      const span = {name:'DeepSeek', type:'llm', model:hostedModel, input:messages, output, duration:performance.now()-modelStart,
         tokens:completion.usage?.total_tokens};
       const trace = this.settle(reference, keyId, completion.usage, {
-        ...span, name:'DeepSeek chat completion', at:new Date().toISOString(),
+        ...span, name:'DeepSeek chat completion', duration, at:new Date().toISOString(),
         project:'hosted-models', status:'success', upstream_id:completion.id, steps:toolSpan ? [toolSpan, span] : [span],
         ...(agent ? {name:agent.name, target_id:agent.id, agent_id:agent.identifier,
           ...attribution, project:'agent:' + agent.identifier, input:data.messages.at(-1).content} : {})
