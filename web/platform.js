@@ -950,9 +950,8 @@ function channelPublishingPanel(agentId, releases) {
     info.append(element('strong', channel.name), element('p', channel.transport));
     const setup = iconButton('external', 'Set up', 'button');
     const environments = ['production', 'staging'].filter(env => releases.has(agentId + ':' + env));
-    setup.disabled = !environments.length;
     setup.setAttribute('aria-label', 'Set up ' + channel.name);
-    setup.addEventListener('click', () => {
+    function continueSetup(environments) {
       if (channel.mode === 'wecom') return openHostedWeCom(agentId, environments);
       const choice = field('environment', 'Environment', environments.map(env =>
         [env, env === 'production' ? 'Production' : 'Staging']));
@@ -973,11 +972,25 @@ function channelPublishingPanel(agentId, releases) {
       openModal(channel.name, [element('p', channel.transport), choice,
         element('p', 'Set the channel credentials and Agent Deck API key on your server, then start the gateway.'),
         command, guide]);
+    }
+    setup.addEventListener('click', () => {
+      if (environments.length) return continueSetup(environments);
+      const agent = ofKind('agent').find(item => item.id === agentId);
+      let savedVersion;
+      const form = formPanel('Publish to Staging', [
+        element('p', agent.name + ' has no published environment. Save its current Studio configuration as a version and publish it to Staging to continue.')
+      ], 'Publish to Staging and continue', async () => {
+        savedVersion ??= await platformRequest('/agent-versions', {agent:agentId, label:'Channel setup · ' + new Date().toISOString().slice(0,16).replace('T', ' ') + ' UTC'});
+        await platformRequest('/agent-releases', {version:savedVersion.id, environment:'staging', only_if_unpublished:true});
+        if (!form.isConnected || !byId('modal').open) return;
+        await openAgentDetail(agentId, 'publish');
+        if (form.isConnected && byId('modal').open) continueSetup(['staging']);
+      });
+      openModal(channel.name, [form]);
     });
     row.append(info, setup);
     panel.append(row);
   }
-  if (!releases.size) panel.append(element('p', 'Publish to Staging or Production to set up a channel.'));
   return panel;
 }
 

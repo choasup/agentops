@@ -598,6 +598,7 @@ export class Workspace extends DurableObject {
       const latest = this.rows('records');
       const current = latest.find(item => item.kind === 'agent_release' && item.agent === agent.id &&
         item.environment === data.environment);
+      if (data.only_if_unpublished === true && current) return current;
       if (data.expected_release && current?.id !== data.expected_release) throw new InputError('This release changed. Refresh before rolling back.');
       if (current?.version === version.id) return current;
       const comparison = latest.find(item => item.kind === 'agent_evaluation' &&

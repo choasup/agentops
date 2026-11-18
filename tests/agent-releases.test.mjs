@@ -185,6 +185,8 @@ test('published Agent configuration is isolated by workspace and environment and
   const production = await run('production');
   assert.equal(production.data.output,'Version two');
   assert.equal(modelCalls.at(-1).max_tokens,40);
+  const preserveStaging = await create('agent-releases', {version:second.id,environment:'staging',only_if_unpublished:true});
+  assert.equal(preserveStaging.id,firstRelease.id);
   const secondRelease = await create('agent-releases', {version:second.id,environment:'staging'});
   assert.equal(secondRelease.previous,first.id);
   assert.equal((await action('agent-releases', {version:first.id,environment:'staging',expected_release:firstRelease.id})).status,400);
