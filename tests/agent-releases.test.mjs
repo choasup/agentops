@@ -175,7 +175,21 @@ test('published Agent configuration is isolated by workspace and environment and
   assert.equal(githubRun.data.steps[0].input.repository,'choasup/agentops');
   assert.match(githubRun.data.steps[0].output.content,/# Agent Deck/);
   assert.match(modelCalls.at(-1).messages[1].content,/An Agent workspace/);
+  const skill = await create('skills', {name:'Repository quickstart', instructions:'Summarize the startup steps.'});
+  assert.equal((await action('agents', {...profile,instructions:'Test',skill:skill.id})).status,400);
+  const skillAgent = await create('agents', {...profile,instructions:'Answer from sources',
+    mcp_connection:git.id,skill:skill.id});
+  await create('agent-update', {...profile,agent:agent.id,instructions:'Summarize the README',
+    mcp_connection:git.id,skill:skill.id});
+  const skillRun = await action('runs', {target_kind:'agent',target:skillAgent.id,input:'How do I start?'}, {token:key.token});
+  assert.equal(skillRun.status,201);
+  assert.deepEqual(skillRun.data.steps.map(step => step.type), ['skill','tool','llm']);
+  assert.equal(skillRun.data.steps[0].skill_id,skill.id);
+  assert.equal(skillRun.data.steps[1].connection_id,git.id);
+  assert.match(modelCalls.at(-1).messages[0].content,/Summarize the startup steps/);
+  const savedSkill = await create('agent-versions', {agent:skillAgent.id,label:'With reusable skill'});
+  assert.equal(savedSkill.skill,skill.id);
   await create('mcp-disconnect',{connection:git.id});
   assert.equal((await runDraft()).status,400);
-  assert.deepEqual(githubCalls,['HEAD','GET']);
+  assert.deepEqual(githubCalls,['HEAD','GET','GET']);
 });

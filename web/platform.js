@@ -1,6 +1,7 @@
 const platformContent = byId('platform-content');
 const modules = {
   billing: ['Billing', 'Manage your balance, review usage, and access API keys.'],
+  skills: ['Skills', 'Save reusable instructions that Agents can apply.'],
   connections: ['Connections', 'Connect tools that your Agents can use.'],
   models: ['Models', 'Manage the model connections your agents run on.'],
   datasets: ['Datasets', 'Curate examples and reference outputs for evaluation.'],
@@ -210,6 +211,27 @@ function renderModule(module, selectedTarget) {
   const options = kind => ofKind(kind).map(item => [item.id, item.name]);
   const promptField = () => field('prompt', 'Prompt version', promptOptions());
   const inputField = () => field('input', 'Input JSON', 'textarea');
+
+  if (module === 'skills') {
+    const skillName = field('name', 'Skill name');
+    const skillInstructions = field('instructions', 'Instructions', 'textarea');
+    skillName.querySelector('input').maxLength = 80;
+    skillInstructions.querySelector('textarea').maxLength = 2000;
+    const template = iconButton('prompt', 'Use repository quickstart template', 'button quiet');
+    template.type = 'button';
+    template.addEventListener('click', () => {
+      skillName.querySelector('input').value = '仓库快速上手';
+      skillInstructions.querySelector('textarea').value =
+        '基于 GitHub 只读工具返回的 README，用中文按「项目用途」「快速启动」「阅读入口」三项提供上手指南。保留 README 里的启动命令和链接，缺失信息请明确说明。';
+    });
+    panels.push(formPanel('Create a Skill', [
+      element('p', 'Requires the GitHub · agentops README connection. Assign the connection and Skill in each Agent’s Configuration.'),
+      template, skillName, skillInstructions
+    ], 'Save Skill', data => create('skills', data)));
+    panels.push(listPanel('Saved Skills', ofKind('skill').map(skill => expandable(skill.name, {
+      instructions:skill.instructions, required_connection:'GitHub · agentops README'
+    }))));
+  }
 
   if (module === 'connections') {
     const catalogue = [
@@ -636,11 +658,19 @@ function agentFields(data, models) {
     toolInput.options[0].textContent = 'No tools';
     toolInput.required = false;
     toolInput.value = data.mcp_connection ?? '';
+    const skills = ofKind('skill');
+    const skill = field('skill', 'Installed Skill', skills.map(item => [item.id, item.name]));
+    const skillInput = skill.querySelector('select');
+    skillInput.options[0].textContent = 'No Skill';
+    skillInput.required = false;
+    skillInput.value = data.skill ?? '';
     const note = element('small');
     const showTool = () => {
       tool.hidden = modelInput.value !== hostedProvider;
       if (tool.hidden) toolInput.value = '';
       const connection = connections.find(item => item.id === toolInput.value);
+      skill.hidden = !skills.length || connection?.provider !== 'github-agentops';
+      if (skill.hidden) skillInput.value = '';
       note.hidden = !connection;
       if (connection) note.textContent = connection.scope ? 'Each run reads ' + connection.scope + '.' :
         'Each run searches public Cloudflare docs using the message you send.';
@@ -648,7 +678,7 @@ function agentFields(data, models) {
     modelInput.addEventListener('change', showTool);
     toolInput.addEventListener('change', showTool);
     showTool();
-    root.append(tool, note);
+    root.append(tool, note, skill);
   }
   return root;
 }
@@ -922,8 +952,9 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
     billingInput.disabled = !hosted;
     manageKeys.hidden = !hosted;
     const connection = ofKind('mcp_connection').find(item => item.id === target.mcp_connection);
+    const skill = ofKind('skill').find(item => item.id === target.skill);
     hint.textContent = connection?.revoked ? 'This Agent’s tool is disconnected. Change it in Configuration.' :
-      connection?.scope ? 'Reads ' + connection.scope + ' before answering.' :
+      connection?.scope ? (skill ? skill.name + ' · ' : '') + 'Reads ' + connection.scope + ' before answering.' :
       connection ? 'Your message is sent to Cloudflare Documentation for a read-only search.' :
       hosted ? 'Charges use your account balance.' : 'Each run is independent.';
     send.disabled = hosted && !availableKeys.length;
@@ -1249,7 +1280,7 @@ async function loadModule(module, selectedTarget) {
   const request = ++moduleRequest;
   const currentRequest = () => request === moduleRequest && activeModule === module && !platformContent.hidden;
   activeModule = module;
-  if (['agent', 'agents', 'studio', 'connections'].includes(module)) showWorkspaceArea('home');
+  if (['agent', 'agents', 'studio', 'connections', 'skills'].includes(module)) showWorkspaceArea('home');
   else if (!['models', 'billing'].includes(module)) showWorkspaceArea('console');
   closeWorkspaceMenu();
   byId('tracing-content').hidden = true;

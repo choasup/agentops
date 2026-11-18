@@ -260,6 +260,26 @@ export class Workspace extends DurableObject {
     agent.mcp_connection = connection.id;
   }
 
+  resolveSkill(records, agent) {
+    if (!agent.skill) return undefined;
+    const skill = records.find(item => item.kind === 'skill' && item.id === agent.skill);
+    const connection = records.find(item => item.kind === 'mcp_connection' &&
+      item.id === agent.mcp_connection && !item.revoked);
+    if (!skill || agent.provider !== hostedProviderId || !connection ||
+        connectionProvider(connection) !== skill.requires || connection.tool !== githubConnection.tool) {
+      throw new InputError('This Skill requires an authorized GitHub · agentops README connection');
+    }
+    return skill;
+  }
+
+  applySkillSelection(records, data, agent) {
+    if (Object.hasOwn(data, 'skill')) {
+      if (data.skill) agent.skill = requiredText(data, 'skill');
+      else delete agent.skill;
+    }
+    this.resolveSkill(records, agent);
+  }
+
   async evaluateVersion(version, agent, examples, records, billingKey) {
     const provider = records.find(item => item.kind === 'model' && item.id === version.provider);
     const results = [];
@@ -269,7 +289,7 @@ export class Workspace extends DurableObject {
           ? await this.billing.complete({model:hostedModel, max_tokens:version.max_tokens, messages:[
             {role:'system', content:version.instructions}, {role:'user', content:example.input}
           ]}, this.billableKey(billingKey), agent, {environment:'development', agent_version:version.id},
-          this.assignedReadTool(records, version, example.input))
+          this.assignedReadTool(records, version, example.input), this.resolveSkill(records, version))
           : await this.execute(null, example.input, version.instructions, provider, version.max_tokens);
         results.push({example:example.id, input:example.input, expected:example.expected, output:result.output,
           passed:result.output.trim() === example.expected.trim(), ...(result.id ? {trace:result.id} : {})});
@@ -454,6 +474,12 @@ export class Workspace extends DurableObject {
         }
       }
     }
+    if (action === 'skills') {
+      const name = requiredText(data, 'name');
+      const instructions = requiredText(data, 'instructions');
+      if (name.length > 80 || instructions.length > 2000) throw new InputError('Use a name up to 80 characters and instructions up to 2000');
+      return this.save('skill', {name, instructions, requires:'github-agentops'});
+    }
     if (action === 'mcp-connect') {
       const provider = readOnlyConnections.get(data.provider);
       if (!provider) throw new InputError('Unknown tool connection');
@@ -492,6 +518,7 @@ export class Workspace extends DurableObject {
         else if (data.provider) agent.provider = find('provider', 'model').id;
         else if (!this.env.TRACE_STUDIO_MODEL) throw new InputError('Choose a model before creating the agent');
         this.authorizeReadTool(records, data, agent);
+        this.applySkillSelection(records, data, agent);
       }
       return this.save('agent', agent);
     }
@@ -508,8 +535,12 @@ export class Workspace extends DurableObject {
         delete updated.max_tokens;
         Object.assign(updated, agentProfile(data));
         this.authorizeReadTool(records, data, updated);
+        this.applySkillSelection(records, data, updated);
       }
-      if (provider !== hostedProviderId) delete updated.mcp_connection;
+      if (provider !== hostedProviderId) {
+        delete updated.mcp_connection;
+        delete updated.skill;
+      }
       this.sql.exec('UPDATE records SET payload=? WHERE id=?', JSON.stringify(updated), agent.id);
       return updated;
     }
@@ -518,11 +549,12 @@ export class Workspace extends DurableObject {
       if (agent.source === 'external') throw new InputError('External agents are versioned in your application');
       const label = requiredText(data, 'label');
       if (label.length > 80) throw new InputError('Use a version label of up to 80 characters');
-      const {name, instructions, description, starter, max_tokens, provider, mcp_connection} = agent;
+      const {name, instructions, description, starter, max_tokens, provider, mcp_connection, skill} = agent;
+      this.resolveSkill(records, agent);
       const config = this.modelConfiguration(records, provider);
       const model_digest = await sha256(JSON.stringify(config));
       return this.save('agent_version', {agent:agent.id, label, name, instructions, description, starter,
-        max_tokens, provider, mcp_connection, model:config.model, model_digest});
+        max_tokens, provider, mcp_connection, skill, model:config.model, model_digest});
     }
     if (action === 'agent-releases') {
       const version = find('version', 'agent_version');
@@ -619,7 +651,7 @@ export class Workspace extends DurableObject {
         return this.billing.complete({model:hostedModel, messages:[
           {role:'system', content:target.instructions}, {role:'user', content:data.input}
         ], max_tokens:target.max_tokens}, this.billableKey(data.billing_key), target, attribution,
-        this.assignedReadTool(records, target, data.input));
+        this.assignedReadTool(records, target, data.input), this.resolveSkill(records, target));
       }
       const prompt = records.find(item => item.id === target.prompt);
       const provider = records.find(item => item.kind === 'model' && item.id === target.provider);
