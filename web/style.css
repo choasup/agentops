@@ -199,9 +199,6 @@ summary {font-weight: 600}
 .agent-empty p {max-width: 38ch}
 .agent-empty .button {margin-top: 6px}
 .agent-settings > .model-actions {margin-top: 16px}
-.agent-mode {display: grid; gap: 8px}
-.agent-mode button {padding: 12px; justify-content: start; text-align: left; white-space: normal; min-width: 0}
-.agent-mode button[aria-pressed="true"] {border-color: #a4affb; color: var(--accent-dark); background: var(--accent-soft)}
 .studio-response {padding: 14px; border-radius: 9px; background: #f4f6ff; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink)}
 .studio-response.is-error {background: #fceef0; color: #8e2c43}
 
@@ -496,8 +493,6 @@ dialog::backdrop {background: #111a3a70}
 .auth-link {display:inline-flex; align-items:center; min-height:36px; border:0; padding:0; background:none; color:var(--accent-dark); font:inherit; font-weight:620; text-decoration:none; cursor:pointer}
 .auth-link:hover {text-decoration:underline; text-underline-offset:3px}
 
-.agent-model-setup {display:grid; gap:10px; padding:14px 0}
-.agent-model-setup .provider-grid {grid-template-columns:repeat(auto-fit,minmax(min(100%, 170px),1fr))}
 .connection-advanced {display:grid; gap:10px}
 .connection-advanced > label {margin-top:10px}
 .connection-advanced summary {cursor:pointer; color:var(--muted)}
@@ -527,17 +522,21 @@ dialog::backdrop {background: #111a3a70}
 .billing-entries {max-height:340px; overflow:auto; overscroll-behavior:contain; margin-top:10px}
 .balance-amount {margin-top:8px; font-size:24px; overflow-wrap:anywhere}
 
-.agent-template-section {margin:16px 0}
-.agent-template-grid {display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,145px),1fr)); gap:8px; margin-top:8px}
-.agent-template {display:grid; gap:5px; justify-items:start; padding:10px; border:1px solid var(--border); border-radius:8px; background:var(--surface); color:var(--ink); text-align:left; cursor:pointer}
-.agent-template:hover {border-color:#b6c0dc; background:var(--accent-soft)}
-.agent-template small {color:var(--muted)}
-.agent-template .ui-icon {color:var(--accent-dark)}
 .agent-form-fields {display:grid; gap:12px}
 .agent-form-identity {display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr)); gap:10px}
 .studio-stream > .button {align-self:start; margin-top:8px}
-#modal:has(.agent-builder) {width:min(690px,calc(100% - 24px))}
-.agent-builder-modes {grid-template-columns:repeat(2,minmax(0,1fr))}
+#modal:has(.agent-builder) {width:min(600px,calc(100% - 24px))}
+.agent-builder {display:grid; gap:8px}
+.agent-builder textarea {min-height:110px; font-size:14px}
+.agent-prompt-examples {display:flex; flex-wrap:wrap; gap:4px 6px}
+.agent-prompt-examples .button {min-height:32px; padding:4px 7px; font-size:12px; border-color:var(--border)}
+.agent-prompt-settings {padding:8px 0; border-block:1px solid var(--border)}
+.agent-prompt-settings summary {display:flex; align-items:center; justify-content:space-between; gap:8px; cursor:pointer}
+.agent-prompt-settings summary::before {content:"+"; color:var(--accent-dark)}
+.agent-prompt-settings[open] summary::before {content:"−"}
+.agent-prompt-settings summary small {margin-inline-start:auto; text-align:end; color:var(--muted)}
+.agent-prompt-settings > label, .agent-prompt-settings > .button {margin-top:10px}
+.agent-builder-external {justify-self:start}
 
 .external-integration, .integration-steps {display:grid; gap:12px}
 .integration-steps {padding-inline-start:22px; margin:0}
