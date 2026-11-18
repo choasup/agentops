@@ -60,6 +60,7 @@ function showTrace(trace, linked = false) {
   const metadata = element('div', undefined, 'trace-meta');
   metadata.append(statusPill(runStatus(trace)), element('span', latency(trace.duration), 'pill'),
     element('span', number.format(trace.tokens) + ' tokens', 'pill'));
+  if (trace.channel === 'wecom') metadata.append(element('span', 'WeCom', 'pill'));
   if (trace.environment) metadata.append(element('span', trace.environment, 'pill'));
   if (typeof trace.cost_nanos === 'number') metadata.append(element('span', billingMoney(trace.cost_nanos), 'pill'));
 
@@ -85,78 +86,64 @@ function showTrace(trace, linked = false) {
   summary.append(identity, link);
 
   const split = element('div', undefined, 'inspector-split');
-  const tree = element('nav', undefined, 'step-tree');
-  tree.setAttribute('aria-label', 'Trace runs');
-  const treeHead = element('h3', 'Execution tree', 'inspector-label');
-  const list = element('div');
-  tree.append(treeHead, list);
   const detail = element('section', undefined, 'step-detail');
-  const stepTitle = element('h3');
-  const tabs = element('div', undefined, 'trace-tabs');
-  const content = element('div', undefined, 'step-content');
-  detail.append(stepTitle, tabs, content);
-  split.append(tree, detail);
-
+  const tree = element('nav', undefined, 'step-tree');
+  tree.setAttribute('aria-label', 'Trace steps');
+  const list = element('div');
+  tree.append(element('h3', 'Execution steps', 'inspector-label'), list);
+  split.append(detail, tree);
   let selectedButton;
-  let selectedRun;
-  let selectedTab;
-  const tabButtons = new Map();
-  function display(tab) {
-    selectedTab = tab;
-    for (const [name, button] of tabButtons) button.setAttribute('aria-pressed', String(name === tab));
-    const run = selectedRun;
-    if (tab === 'Details') {
-      const details = element('dl', undefined, 'run-facts');
-      const items = [
-        ['Type', run.type ?? (run === trace ? 'trace' : 'run')],
-        ['Duration', typeof run.duration === 'number' ? latency(run.duration) : '—'],
-        ['Tokens', typeof run.tokens === 'number' ? number.format(run.tokens) : '—'],
-        ['Started', run.at ? new Date(run.at).toLocaleString() : '—'],
-        ['ID', run.id ?? '—']
-      ];
-      if (run.model) items.splice(1, 0, ['Model', run.model]);
-      if (run.type === 'tool' && run.connection_id) items.push(['Connection ID', run.connection_id], ['Access', 'Read-only']);
-      if (run.type === 'tool' && run.connection_scope) items.push(['Resource scope', run.connection_scope]);
-      if (run.type === 'skill' && run.skill_id) items.push(['Skill ID', run.skill_id]);
-      if (run === trace && run.agent_version) items.push(['Version ID', run.agent_version]);
-      if (run === trace && run.key_id && typeof run.cost_nanos === 'number') {
-        items.push(['API Key ID', run.key_id], ['Charge', billingMoney(run.cost_nanos)]);
-      }
-      for (const [key, value] of items) details.append(element('dt', key), element('dd', value));
-      content.replaceChildren(details);
-    } else {
-      const value = tab === 'Error' ? run.error : run[tab.toLowerCase()];
-      content.replaceChildren(value === undefined
-        ? element('p', 'No ' + tab.toLowerCase() + ' recorded.')
-        : element('pre', typeof value === 'string' ? value : JSON.stringify(value, null, 2)));
-    }
+
+  function contentSection(label, value, className) {
+    const section = element('section', undefined, 'trace-payload-section ' + (className ?? ''));
+    section.append(element('h4', label));
+    if (value === undefined) section.append(element('p', 'Not recorded', 'step-time'));
+    else if (typeof value === 'string') section.append(element('p', value, 'trace-text'));
+    else section.append(element('pre', JSON.stringify(value, null, 2)));
+    return section;
   }
 
   function select(run, button) {
     selectedButton?.removeAttribute('aria-current');
     button.setAttribute('aria-current', 'true');
     selectedButton = button;
-    selectedRun = run;
-    stepTitle.textContent = run === trace ? 'Trace overview' : run.name;
-    const available = ['Input', 'Output', ...(run.error != null ? ['Error'] : []), 'Details'];
-    tabButtons.clear();
-    tabs.replaceChildren(...available.map(tab => {
-      const toggle = element('button', tab, 'trace-tab');
-      toggle.addEventListener('click', () => display(tab));
-      tabButtons.set(tab, toggle);
-      return toggle;
-    }));
-    display(run.error != null ? 'Error' : available.includes(selectedTab) && selectedTab !== 'Error'
-      ? selectedTab : run.output !== undefined ? 'Output' : 'Input');
+    const title = element('header', undefined, 'trace-step-heading');
+    title.append(element('h3', run === trace ? 'Run overview' : run.name), statusPill(runStatus(run)));
+    const facts = element('dl', undefined, 'run-facts');
+    const values = [
+      ['Type', run.type ?? (run === trace ? 'trace' : 'run')],
+      ['Model', run.model],
+      ['Duration', typeof run.duration === 'number' ? latency(run.duration) : undefined],
+      ['Tokens', typeof run.tokens === 'number' ? number.format(run.tokens) : undefined],
+      ['Started', run.at ? new Date(run.at).toLocaleString() : undefined],
+      ['ID', run.id],
+      ['Connection ID', run.connection_id],
+      ['Access', run.type === 'tool' && run.connection_id ? 'Read-only' : undefined],
+      ['Resource scope', run.connection_scope],
+      ['Skill ID', run.skill_id],
+      ['Version ID', run.agent_version],
+      ['API Key ID', run.key_id],
+      ['Charge', typeof run.cost_nanos === 'number' ? billingMoney(run.cost_nanos) : undefined]
+    ];
+    for (const [label, value] of values) {
+      if (value != null) facts.append(element('dt', label), element('dd', value));
+    }
+    const metadata = element('details', undefined, 'trace-step-facts');
+    metadata.append(element('summary', 'Run details'), facts);
+    const payloads = element('div', undefined, 'trace-payloads');
+    payloads.append(contentSection('Input', run.input), contentSection('Output', run.output));
+    detail.replaceChildren(title, ...(run.error != null ? [contentSection('Error', run.error, 'trace-error')] : []),
+      payloads, metadata);
   }
 
   function addRun(run, depth) {
     const button = element('button', undefined, 'step-row');
-    button.style.setProperty('--depth', Math.min(depth, 8));
-    const name = element('span', run === trace ? 'Trace overview' : run.name, 'step-name');
-    const failed = runStatus(run) === 'error';
-    const status = element('span', undefined, 'step-state ' + (failed ? 'error' : 'success'));
-    status.append(icon(failed ? 'error' : 'check'), element('span', failed ? 'Error' : 'Success', 'sr'));
+    button.style.setProperty('--depth', Math.min(depth, 5));
+    const name = element('span', run === trace ? 'Run overview' : run.name, 'step-name');
+    const state = runStatus(run);
+    const status = element('span', undefined, 'step-state ' + state);
+    status.append(icon(state === 'error' ? 'error' : state === 'success' ? 'check' : 'traces'),
+      element('span', state === 'error' ? 'Error' : state === 'success' ? 'Success' : 'Recorded', 'sr'));
     const time = typeof run.duration === 'number' ? latency(run.duration) : '—';
     button.append(status, name, element('span', time, 'step-time'));
     button.addEventListener('click', () => select(run, button));
@@ -259,7 +246,7 @@ function render() {
   const status = byId('status').value;
   const filtered = scope.filter(trace =>
     (!status || trace.status === status) &&
-    (!query || [trace.name, trace.project, trace.id, JSON.stringify(trace.input), JSON.stringify(trace.error)]
+    (!query || [trace.name, trace.project, trace.id, trace.channel, JSON.stringify(trace.input), JSON.stringify(trace.error)]
       .some(value => value?.toLowerCase().includes(query)))
   );
   const limit = view === 'overview' ? 8 : filtered.length;
@@ -268,7 +255,13 @@ function render() {
     const row = element('tr');
     const open = element('button', trace.name, 'trace');
     open.addEventListener('click', () => showTrace(trace));
-    const values = [open, traceScope(trace), trace.environment ?? '—', element('span', trace.status, 'pill ' + trace.status),
+    const identity = element('div', undefined, 'trace-row-identity');
+    identity.append(open);
+    if (typeof trace.input === 'string' && trace.input.trim()) {
+      identity.append(element('small', trace.input.trim().slice(0, 140), 'trace-input-preview'));
+    }
+    if (trace.channel === 'wecom') identity.append(element('span', 'WeCom', 'pill'));
+    const values = [identity, traceScope(trace), trace.environment ?? '—', element('span', trace.status, 'pill ' + trace.status),
       latency(trace.duration), number.format(trace.tokens), typeof trace.cost_nanos === 'number' ? billingMoney(trace.cost_nanos) : money(trace.cost),
       new Date(trace.at).toLocaleString('en-US', {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'})];
     for (const value of values) {
