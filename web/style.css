@@ -334,6 +334,8 @@ dialog::backdrop {background: #111a3a70}
 .studio-toolbar > label {display:flex; align-items:center; flex-wrap:wrap; gap:8px; color:var(--muted); font-size:12px; font-weight:650; min-width:0}
 .studio-toolbar select {min-height:32px; max-width:min(100%, 310px); padding-block:4px}
 .studio-toolbar .button {margin-left:auto; min-height:32px}
+.studio-config {padding:16px clamp(15px,3vw,32px); border-bottom:1px solid var(--border); background:var(--canvas)}
+.studio-config > .module-panel {max-width:760px; margin:0; box-shadow:none}
 .studio-model {border:1px solid var(--border); color:var(--muted); border-radius:6px; padding:3px 7px; font-size:11px; overflow-wrap:anywhere}
 .studio-split {display:grid; grid-template-columns:minmax(0,1fr) minmax(170px, 24%)}
 .studio-history {padding:16px 10px; border-left:1px solid var(--border); min-width:0; background:#fbfcfe; border-radius:0 0 10px 0}

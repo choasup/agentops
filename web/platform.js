@@ -428,7 +428,7 @@ function renderModule(module, selectedTarget) {
     } else {
       const external = agent.source === 'external';
       const tabs = external ? [['integration', 'Integration'], ['activity', 'Activity']] :
-        [['configuration', 'Configuration'], ['studio', 'Studio'], ...(accountStatus?.user ?
+        [['studio', 'Studio'], ...(accountStatus?.user ?
           [['versions', 'Versions'], ['evaluations', 'Evaluations'], ['releases', 'Releases']] : [])];
       const section = tabs.some(([id]) => id === selectedTarget.section) ? selectedTarget.section : tabs[0][0];
       headingText.replaceChildren(element('h1', agent.name));
@@ -446,8 +446,11 @@ function renderModule(module, selectedTarget) {
         nav.append(button);
       }
       panels.push(nav);
-      if (section === 'configuration') panels.push(agentConfigurationPanel(agent, async () => openAgentDetail(agent.id, section)));
-      if (section === 'studio') panels.push(studioWorkspace([agent], agent.id, true));
+      if (section === 'studio') panels.push(studioWorkspace([agent], agent.id, updated => {
+        headingText.replaceChildren(element('h1', updated.name));
+        byId('crumb').textContent = updated.name;
+        if (updated.description) headingText.append(element('p', updated.description));
+      }));
       if (section === 'versions') panels.push(...agentReleasePanels(agent.id, 'versions'));
       if (section === 'releases') panels.push(...agentReleasePanels(agent.id, 'releases'));
       if (section === 'evaluations') panels.push(...agentEvaluationPanels(agent.id));
@@ -800,22 +803,6 @@ function externalIntegration(agent, inline = false) {
   openModal('Connect ' + agent.name, [panel]);
 }
 
-function agentSettings(agent, returnTo = 'agents') {
-  if (agent.source === 'external') {
-    externalIntegration(agent);
-    return;
-  }
-  const currentModel = agent.provider ? recordName(agent.provider) : 'Workspace default';
-  const content = element('div', undefined, 'agent-settings');
-  content.append(element('p', 'Model: ' + currentModel));
-  if (agent.identifier) content.append(element('p', 'Trace identifier: ' + agent.identifier));
-  if (agent.kind === 'agent') content.append(agentConfigurationPanel(agent, async () => {
-    byId('modal').close();
-    await loadModule(returnTo, agent.id);
-  }));
-  openModal(agent.name, [content]);
-}
-
 function agentConfigurationPanel(agent, afterSave) {
   const choices = studioModels();
   if (agent.provider && !choices.some(([id]) => id === agent.provider)) choices.unshift([agent.provider, recordName(agent.provider)]);
@@ -827,12 +814,12 @@ function agentConfigurationPanel(agent, afterSave) {
     if (choices.length) providerInput.remove(0);
   }
   return formPanel('Agent configuration', [fields], 'Save changes', async data => {
-    await platformRequest('/agent-update', {...agentPayload(data), agent:agent.id});
-    await afterSave();
+    const updated = await platformRequest('/agent-update', {...agentPayload(data), agent:agent.id});
+    afterSave(updated);
   });
 }
 
-function studioWorkspace(targets, selectedTarget, scoped = false) {
+function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
   if (!targets.length) {
     const panel = element('section', undefined, 'panel agent-empty wide');
     const create = iconButton('plus', 'New agent', 'button primary');
@@ -847,13 +834,17 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
     target.id, target.name + (target.kind === 'deployment' ? ' · Deployment' : '')
   ]));
   const targetInput = selector.querySelector('select');
-  selector.hidden = scoped;
+  selector.hidden = Boolean(onAgentUpdate);
   targetInput.value = selectedTarget ?? lastStudioTarget ?? targets[0].id;
   if (!targetInput.value) targetInput.value = targets[0].id;
   const model = element('span', undefined, 'studio-model');
-  const configure = iconButton('settings', 'Configuration', 'button');
-  toolbar.append(selector, model);
-  if (!scoped) toolbar.append(configure);
+  const configure = iconButton('settings', 'Configure', 'button');
+  const editor = element('div', undefined, 'studio-config');
+  editor.id = 'studio-config';
+  editor.hidden = true;
+  configure.setAttribute('aria-controls', editor.id);
+  configure.setAttribute('aria-expanded', 'false');
+  toolbar.append(selector, model, configure);
 
   const split = element('div', undefined, 'studio-split');
   const history = element('aside', undefined, 'studio-history');
@@ -883,7 +874,7 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
   form.append(messageLabel, message, hint, formFooter, notice);
   stage.append(form, session);
   split.append(stage, history);
-  panel.append(toolbar, split);
+  panel.append(toolbar, editor, split);
 
   let pending = false;
   let selectedRun;
@@ -895,7 +886,8 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
     notice.classList.toggle('is-error', error);
   };
   const updateRunButton = () => {
-    send.disabled = pending || !message.value.trim();
+    send.disabled = pending || !editor.hidden || !message.value.trim();
+    configure.disabled = pending;
     send.querySelector('span').textContent = pending ? 'Running…' : 'Run test';
   };
   const fillMessage = value => {
@@ -917,6 +909,8 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
       '';
     configure.hidden = target.kind === 'deployment';
     if (reset) {
+      editor.replaceChildren();
+      setEditorOpen(false);
       selectedRun = undefined;
       requestTrace = undefined;
       message.value = '';
@@ -928,7 +922,32 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
     draw();
   };
   targetInput.addEventListener('change', () => selectTarget());
-  configure.addEventListener('click', () => agentSettings(current(), 'studio'));
+  function setEditorOpen(open) {
+    editor.hidden = !open;
+    configure.setAttribute('aria-expanded', String(open));
+    configure.querySelector('span').textContent = open ? 'Hide configuration' : 'Configure';
+    updateRunButton();
+  }
+
+  configure.addEventListener('click', () => {
+    const target = current();
+    if (!editor.firstChild) {
+      editor.append(agentConfigurationPanel(target, updated => {
+        if (!panel.isConnected) return;
+        targets[targets.findIndex(item => item.id === updated.id)] = updated;
+        records = records.map(record => record.id === updated.id ? updated : record);
+        Array.from(targetInput.options).find(option => option.value === updated.id).textContent = updated.name;
+        if (current().id !== updated.id) return;
+        onAgentUpdate?.(updated);
+        editor.replaceChildren();
+        setEditorOpen(false);
+        selectTarget(false);
+        setNotice('Configuration saved.');
+        message.focus();
+      }));
+    }
+    setEditorOpen(editor.hidden);
+  });
 
   function recentRuns() {
     const target = current();
