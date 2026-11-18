@@ -850,22 +850,22 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
   if (!targetInput.value) targetInput.value = targets[0].id;
   const model = element('span', undefined, 'studio-model');
   const configure = iconButton('settings', 'Configuration', 'button');
-  toolbar.append(selector, model, configure);
+  toolbar.append(selector, model);
+  if (!scoped) toolbar.append(configure);
 
   const split = element('div', undefined, 'studio-split');
   const history = element('aside', undefined, 'studio-history');
-  history.append(element('h2', 'Runs'));
+  history.append(element('h2', 'Run history'));
   const runList = element('div', undefined, 'studio-run-list');
   history.append(runList);
   const stage = element('div', undefined, 'studio-stage');
   const session = element('div', undefined, 'studio-stream');
-  session.setAttribute('aria-live', 'polite');
   const form = element('form', undefined, 'studio-composer');
   const availableKeys = apiKeys.filter(key => !key.revoked && key.scopes.includes('models:invoke'));
-  const billingField = field('billing_key', 'Charge to API key', availableKeys.map(key => [key.id, key.name]));
+  const billingField = field('billing_key', 'Billing key', availableKeys.map(key => [key.id, key.name]));
   const billingInput = billingField.querySelector('select');
   if (availableKeys.length === 1) billingInput.value = availableKeys[0].id;
-  const manageKeys = iconButton('wallet', 'Open billing', 'button');
+  const manageKeys = iconButton('key', 'Manage billing keys', 'button');
   manageKeys.type = 'button';
   manageKeys.addEventListener('click', () => loadModule('billing').then(() => {
     if (!availableKeys.length) byId('billing-api-keys')?.scrollIntoView();
@@ -873,51 +873,74 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
   const message = element('textarea');
   message.rows = 2;
   message.required = true;
-  const messageLabel = element('label', 'Message', 'sr');
+  const messageLabel = element('label', 'Message', 'studio-input-label');
   message.id = 'studio-message';
   messageLabel.htmlFor = message.id;
   const send = iconButton('play', 'Run', 'button primary');
-  const hint = element('p', 'Each run is independent.');
+  const hint = element('p', undefined, 'studio-run-context');
+  const notice = element('p', undefined, 'studio-run-notice');
+  notice.setAttribute('role', 'status');
   const formFooter = element('div', undefined, 'composer-footer');
-  formFooter.append(hint, manageKeys, send);
-  form.append(messageLabel, message, billingField, formFooter);
-  stage.append(session, form);
-  split.append(history, stage);
+  const billingActions = element('div', undefined, 'studio-billing-actions');
+  billingActions.append(billingField, manageKeys);
+  formFooter.append(billingActions, send);
+  form.append(messageLabel, message, hint, formFooter, notice);
+  stage.append(form, session);
+  split.append(stage, history);
   panel.append(toolbar, split);
 
   let pending = false;
   let selectedRun;
-  let lastError;
   let requestTrace;
   const current = () => targets.find(target => target.id === targetInput.value);
+  const setNotice = (text = '', error = false) => {
+    notice.textContent = text;
+    notice.classList.toggle('is-error', error);
+  };
+  const updateRunButton = () => {
+    const needsKey = current().provider === hostedProvider && !billingInput.value;
+    send.disabled = pending || needsKey || !message.value.trim();
+    send.querySelector('span').textContent = pending ? 'Running…' : 'Run test';
+  };
+  const updateBillingNotice = () => {
+    const needsKey = current().provider === hostedProvider && !billingInput.value;
+    setNotice(needsKey ? (availableKeys.length ? 'Choose a billing key to run this test.' :
+      'Add an API key with hosted model access to run this test.') : '');
+  };
+  const fillMessage = value => {
+    message.value = value;
+    if (!pending) updateBillingNotice();
+    updateRunButton();
+    message.focus();
+  };
   const selectTarget = (reset = true) => {
     const target = current();
     lastStudioTarget = target.id;
     model.textContent = target.provider ? recordName(target.provider) : target.kind === 'deployment' ? 'Deployment' : 'Workspace default';
     const hosted = target.provider === hostedProvider;
-    billingField.hidden = !hosted;
-    billingInput.disabled = !hosted;
-    manageKeys.hidden = !hosted;
+    billingField.hidden = !hosted || !availableKeys.length;
+    billingInput.disabled = !hosted || !availableKeys.length;
+    manageKeys.hidden = !hosted || Boolean(availableKeys.length);
     const connection = ofKind('mcp_connection').find(item => item.id === target.mcp_connection);
     const skill = ofKind('skill').find(item => item.id === target.skill);
     hint.textContent = connection?.revoked ? 'This Agent’s tool is disconnected. Change it in Configuration.' :
       connection?.scope ? (skill ? skill.name + ' · ' : '') + 'Reads ' + connection.scope + ' before answering.' :
       connection ? 'Your message is sent to Cloudflare Documentation for a read-only search.' :
-      hosted ? 'Charges use your account balance.' : 'Each run is independent.';
-    send.disabled = hosted && !availableKeys.length;
+      '';
     configure.hidden = target.kind === 'deployment';
     if (reset) {
       selectedRun = undefined;
       requestTrace = undefined;
-      lastError = undefined;
       message.value = '';
     }
-    messageLabel.textContent = target.instructions ? 'Message' : 'Input JSON';
+    messageLabel.textContent = target.instructions ? 'Test message' : 'Input JSON';
     message.placeholder = target.instructions ? 'Send a test message…' : 'Enter JSON input…';
+    updateBillingNotice();
+    updateRunButton();
     draw();
   };
   targetInput.addEventListener('change', () => selectTarget());
-  configure.addEventListener('click', () => scoped ? openAgentDetail(current().id, 'configuration') : agentSettings(current(), 'studio'));
+  configure.addEventListener('click', () => agentSettings(current(), 'studio'));
 
   function recentRuns() {
     const target = current();
@@ -940,7 +963,6 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
       row.append(main, meta, statusPill(runStatus(run)));
       row.addEventListener('click', () => {
         selectedRun = run;
-        lastError = undefined;
         draw();
         runList.querySelector('[aria-current]')?.focus();
       });
@@ -948,21 +970,13 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
     }));
     if (!runs.length) runList.append(element('p', 'No runs yet.', 'history-empty'));
 
-    if (pending || lastError) {
-      session.replaceChildren(element('p', pending ? 'Running…' : lastError,
-        pending ? 'studio-pending' : 'studio-response is-error'));
-      return;
-    }
     if (!selectedRun) {
-      session.replaceChildren(element('h2', 'Test ' + current().name),
-        element('p', current().description || 'Run a test to see its response and execution trace.'));
+      session.replaceChildren(element('h2', 'No test results yet'),
+        element('p', 'Run a test to see the response and trace here.'));
       if (current().starter) {
         const starter = iconButton('arrow', 'Use starter message', 'button');
         starter.type = 'button';
-        starter.addEventListener('click', () => {
-          message.value = current().starter;
-          message.focus();
-        });
+        starter.addEventListener('click', () => fillMessage(current().starter));
         session.append(starter);
       }
       return;
@@ -970,68 +984,80 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
     const run = selectedRun;
     const failed = runStatus(run) === 'error';
     const input = element('article', undefined, 'studio-message user-message');
-    input.append(element('h3', 'Input'), readableContent(run.input));
+    const inputHeader = element('header', undefined, 'studio-input-head');
     const reply = element('article', undefined, 'studio-message');
     const header = element('header', undefined, 'studio-response-head');
     header.append(element('h3', failed ? 'Run failed' : 'Response'), statusPill(runStatus(run)),
       element('span', latency(run.duration) + ' · ' + number.format(run.tokens) + ' tokens', 'step-time'));
     const actions = element('div', undefined, 'section-actions');
     const inspect = iconButton('traces', 'View trace', 'button');
-    inspect.addEventListener('click', () => openConsoleTrace(run));
+    inspect.addEventListener('click', () => showTrace(run));
     const reuse = iconButton('copy', 'Reuse input', 'button quiet');
     reuse.addEventListener('click', () => {
-      message.value = current().instructions && typeof run.input === 'string' ? run.input : JSON.stringify(run.input ?? null, null, 2);
-      message.focus();
+      fillMessage(current().instructions && typeof run.input === 'string' ? run.input : JSON.stringify(run.input ?? null, null, 2));
     });
-    actions.append(inspect, reuse);
+    inputHeader.append(element('h3', 'Input'), reuse);
+    input.append(inputHeader, readableContent(run.input));
+    actions.append(inspect);
     reply.append(header, readableContent(failed ? run.error ?? 'Run failed' : run.output), actions);
     session.replaceChildren(input, reply);
   }
 
   function readableContent(value) {
-    if (typeof value === 'string') return element('div', value, 'studio-message-text');
+    if (typeof value === 'string') {
+      const content = element('div', undefined, 'studio-message-text');
+      value.split(/(`[^`\n]+`)/).forEach((part, index) => {
+        content.append(index % 2 ? element('code', part.slice(1, -1)) : part);
+      });
+      return content;
+    }
     return element('pre', JSON.stringify(value ?? null, null, 2));
   }
 
+  message.addEventListener('input', () => {
+    if (notice.classList.contains('is-error')) setNotice();
+    updateRunButton();
+  });
+  billingInput.addEventListener('change', () => {
+    if (!pending) updateBillingNotice();
+    updateRunButton();
+  });
   message.addEventListener('keydown', event => {
-    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !pending) {
+    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !send.disabled) {
       event.preventDefault();
       form.requestSubmit();
     }
   });
   form.addEventListener('submit', async event => {
     event.preventDefault();
-    if (pending) return;
+    if (send.disabled) return;
     const target = current();
     let input;
     try {
       input = target.instructions ? message.value : jsonInput(message.value);
-      if (target.instructions && !input.trim()) throw new Error('Enter a test message.');
     } catch (error) {
-      lastError = error.message;
-      draw();
+      setNotice(error.message, true);
+      message.focus();
       return;
     }
     pending = true;
-    lastError = undefined;
     targetInput.disabled = true;
-    send.disabled = true;
-    runList.inert = true;
-    draw();
+    setNotice('Running test…');
+    updateRunButton();
     const submitted = message.value;
     try {
       const trace = await platformRequest('/runs', {target:target.id, target_kind:target.kind, input,
         ...(target.provider === hostedProvider ? {billing_key:billingInput.value} : {})});
       selectedRun = requestTrace = trace;
       if (message.value === submitted) message.value = '';
+      setNotice(runStatus(trace) === 'error' ? 'Test failed. See the result below.' : 'Test complete.');
       refresh();
     } catch (error) {
-      lastError = error.message;
+      setNotice(error.message, true);
     } finally {
       pending = false;
       targetInput.disabled = false;
-      send.disabled = false;
-      runList.inert = false;
+      updateRunButton();
       draw();
     }
   });

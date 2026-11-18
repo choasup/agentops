@@ -335,8 +335,8 @@ dialog::backdrop {background: #111a3a70}
 .studio-toolbar select {min-height:32px; max-width:min(100%, 310px); padding-block:4px}
 .studio-toolbar .button {margin-left:auto; min-height:32px}
 .studio-model {border:1px solid var(--border); color:var(--muted); border-radius:6px; padding:3px 7px; font-size:11px; overflow-wrap:anywhere}
-.studio-split {display:grid; grid-template-columns:minmax(188px, 26%) minmax(0,1fr); min-height:min(580px, calc(100dvh - 244px))}
-.studio-history {padding:14px 10px; border-right:1px solid var(--border); min-width:0; background:#fbfcfe; border-radius:0 0 0 10px}
+.studio-split {display:grid; grid-template-columns:minmax(0,1fr) minmax(170px, 24%)}
+.studio-history {padding:16px 10px; border-left:1px solid var(--border); min-width:0; background:#fbfcfe; border-radius:0 0 10px 0}
 .studio-history h2 {font-size:12px; padding:0 7px 10px}
 .studio-run-list {display:grid; align-content:start; gap:3px; max-height:480px; overflow:auto}
 .studio-run {display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:4px; padding:8px; border:1px solid transparent; border-radius:7px; background:none; text-align:left; color:var(--ink)}
@@ -346,22 +346,30 @@ dialog::backdrop {background: #111a3a70}
 .studio-run-time, .history-empty {font-size:11px; color:var(--subtle)}
 .history-empty {padding:4px 7px}
 .studio-stage {min-width:0; display:flex; flex-direction:column}
-.studio-stream {flex:1; padding:24px clamp(14px,4vw,44px); min-height:260px; overflow-wrap:anywhere}
-.studio-stream > h2 {margin-top:20px}
+.studio-stream {padding:20px clamp(15px,3vw,32px) 24px; overflow-wrap:anywhere}
 .studio-stream > p {margin-top:7px}
-.studio-message {padding:16px 0; max-width:78ch}
+.studio-message {padding:14px 0; max-width:78ch}
 .studio-message + .studio-message {border-top:1px solid var(--border)}
-.studio-message h3 {font-size:13px}
+.studio-message h3 {font-size:14px}
+.studio-input-head {display:flex; align-items:center; justify-content:space-between; gap:8px}
+.studio-input-head .button {min-height:30px; padding:4px 6px; font-size:12px}
 .studio-message.user-message {padding-top:0}
 .studio-message-text {white-space:pre-wrap; overflow-wrap:anywhere; margin-top:7px; line-height:1.65}
 .studio-response-head {display:flex; align-items:center; gap:7px; flex-wrap:wrap}
 .studio-message .section-actions {margin-top:12px}
-.studio-pending::before {content:""; display:inline-block; width:8px; height:8px; margin-right:8px; border-radius:50%; background:var(--accent)}
-.studio-composer {display:grid; gap:8px; border-top:1px solid var(--border); padding:13px clamp(14px,4vw,44px)}
+.studio-composer {display:grid; gap:8px; border-bottom:1px solid var(--border); padding:16px clamp(15px,3vw,32px)}
 .studio-composer textarea {resize:vertical; padding:9px 11px; width:100%; min-height:65px}
-.composer-footer {display:flex; align-items:center; justify-content:space-between; gap:10px}
-.composer-footer p {font-size:11px}
-.composer-footer .button {min-width:72px; min-height:33px}
+.studio-input-label {font-weight:650}
+.studio-run-context, .studio-run-notice {font-size:12px; color:var(--muted)}
+.studio-run-context:empty, .studio-run-notice:empty {display:none}
+.studio-run-notice.is-error {color:#8e2c43}
+.composer-footer, .studio-billing-actions, .studio-billing-actions > label {display:flex; align-items:center; flex-wrap:wrap; gap:8px}
+.studio-billing-actions {min-width:0}
+.studio-billing-actions > label {font-size:12px; color:var(--muted); min-width:0}
+.studio-billing-actions .select-control {max-width:100%}
+.composer-footer > .primary {margin-inline-start:auto}
+.composer-footer .button {min-height:34px}
+.studio-message-text code {background:var(--canvas); padding:1px 4px; border-radius:4px}
 
 .trace-inspector {width:min(900px,100%); border-radius:10px 0 0 10px}
 .trace-inspector .modal-head {padding:11px 16px}
@@ -392,9 +400,9 @@ dialog::backdrop {background: #111a3a70}
 
 @media (max-width:680px) {
   .studio-split, .inspector-split {grid-template-columns:minmax(0,1fr)}
-  .studio-history, .step-tree {border-right:0; border-bottom:1px solid var(--border); border-radius:0}
+  .step-tree {border-right:0; border-bottom:1px solid var(--border); border-radius:0}
+  .studio-history {border-left:0; border-top:1px solid var(--border); border-radius:0 0 10px 10px}
   .studio-run-list, .step-tree > div {max-height:164px; overflow:auto}
-  .studio-stream {min-height:200px}
   .trace-inspector {border-radius:0}
   .inspector-split {min-height:0}
   .registry-toolbar .registry-count {margin-left:0}
