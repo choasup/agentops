@@ -134,7 +134,7 @@ export class Billing {
     });
   }
 
-  async complete(data, keyId, agent) {
+  async complete(data, keyId, agent, attribution) {
     if (!this.env.DEEPSEEK_API_KEY) throw new BillingError('Hosted DeepSeek is unavailable', 503);
     if (data.model !== hostedModel || (data.stream !== undefined && data.stream !== false) ||
         !Array.isArray(data.messages) || !data.messages.length || data.messages.length > 64 ||
@@ -167,7 +167,7 @@ export class Billing {
         ...span, name:'DeepSeek chat completion', at:new Date().toISOString(),
         project:'hosted-models', status:'success', upstream_id:completion.id, steps:[span],
         ...(agent ? {name:agent.name, target_id:agent.id, agent_id:agent.identifier,
-          environment:'local', project:'agent:' + agent.identifier, input:data.messages.at(-1).content} : {})
+          ...attribution, project:'agent:' + agent.identifier, input:data.messages.at(-1).content} : {})
       });
       return agent ? trace : {...completion, agent_deck:{trace_id:trace.id, cost_nanos:trace.cost_nanos, currency:'USD'}};
     } catch (error) {

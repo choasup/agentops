@@ -5,6 +5,7 @@ import { cookie, cookieValue, emailConfigured, json, randomId as id, sessionCook
 export { Accounts } from './accounts.mjs';
 
 const environments = ['local', 'development', 'staging', 'production'];
+const releaseEnvironments = ['staging', 'production'];
 const chatPath = '/v1/chat/completions';
 class InputError extends Error {}
 
@@ -193,6 +194,46 @@ export class Workspace extends DurableObject {
     return record;
   }
 
+  modelConfiguration(records, providerId) {
+    if (providerId === hostedProviderId) {
+      if (!this.env.DEEPSEEK_API_KEY) throw new InputError('Hosted DeepSeek is unavailable');
+      return {model:hostedModel, url:'https://api.deepseek.com/chat/completions'};
+    }
+    const provider = records.find(item => item.kind === 'model' && item.id === providerId);
+    if (providerId && !provider) throw new InputError('The model connection was removed');
+    const model = provider?.model ?? this.env.TRACE_STUDIO_MODEL;
+    const url = provider?.url ?? this.env.TRACE_STUDIO_MODEL_URL;
+    if (!model || !url) throw new InputError('Configure a model before saving a version');
+    return {model, url};
+  }
+
+  async verifyVersionModel(records, version) {
+    const config = this.modelConfiguration(records, version.provider);
+    if (await sha256(JSON.stringify(config)) !== version.model_digest) {
+      throw new InputError('The saved model connection changed. Restore it or save a new version.');
+    }
+  }
+
+  async evaluateVersion(version, agent, examples, records, billingKey) {
+    const provider = records.find(item => item.kind === 'model' && item.id === version.provider);
+    const results = [];
+    for (const example of examples) {
+      try {
+        const result = version.provider === hostedProviderId
+          ? await this.billing.complete({model:hostedModel, max_tokens:version.max_tokens, messages:[
+            {role:'system', content:version.instructions}, {role:'user', content:example.input}
+          ]}, this.billableKey(billingKey), agent, {environment:'development', agent_version:version.id})
+          : await this.execute(null, example.input, version.instructions, provider, version.max_tokens);
+        results.push({example:example.id, input:example.input, expected:example.expected, output:result.output,
+          passed:result.output.trim() === example.expected.trim(), ...(result.id ? {trace:result.id} : {})});
+      } catch (error) {
+        if (!(error instanceof InputError || error instanceof BillingError)) throw error;
+        results.push({example:example.id, input:example.input, expected:example.expected, error:error.message, passed:false});
+      }
+    }
+    return {version:version.id, passed:results.every(result => result.passed), results};
+  }
+
   async createApiKey(data, workspace) {
     const name = requiredText(data, 'name');
     if (name.length > 80) throw new InputError('Use a name of up to 80 characters');
@@ -228,7 +269,7 @@ export class Workspace extends DurableObject {
   }
 
   ingest(data) {
-    const {cost_nanos, key_id, ...reported} = data;
+    const {cost_nanos, key_id, agent_version, agent_release, ...reported} = data;
     const trace = {project:'default', status:'success', duration:0, tokens:0, cost:0, steps:[], ...reported};
     trace.name = requiredText(trace, 'name');
     trace.project = requiredText(trace, 'project');
@@ -405,6 +446,61 @@ export class Workspace extends DurableObject {
       this.sql.exec('UPDATE records SET payload=? WHERE id=?', JSON.stringify(updated), agent.id);
       return updated;
     }
+    if (action === 'agent-versions') {
+      const agent = find('agent', 'agent');
+      if (agent.source === 'external') throw new InputError('External agents are versioned in your application');
+      const label = requiredText(data, 'label');
+      if (label.length > 80) throw new InputError('Use a version label of up to 80 characters');
+      const {name, instructions, description, starter, max_tokens, provider} = agent;
+      const config = this.modelConfiguration(records, provider);
+      const model_digest = await sha256(JSON.stringify(config));
+      return this.save('agent_version', {agent:agent.id, label, name, instructions, description, starter,
+        max_tokens, provider, model:config.model, model_digest});
+    }
+    if (action === 'agent-releases') {
+      const version = find('version', 'agent_version');
+      if (!releaseEnvironments.includes(data.environment)) throw new InputError('Choose staging or production');
+      const agent = records.find(item => item.kind === 'agent' && item.id === version.agent);
+      if (!agent || agent.source === 'external') throw new InputError('Studio agent was not found');
+      await this.verifyVersionModel(records, version);
+      const latest = this.rows('records');
+      const current = latest.find(item => item.kind === 'agent_release' && item.agent === agent.id &&
+        item.environment === data.environment);
+      if (data.expected_release && current?.id !== data.expected_release) throw new InputError('This release changed. Refresh before rolling back.');
+      if (current?.version === version.id) return current;
+      const comparison = latest.find(item => item.kind === 'agent_evaluation' &&
+        item.variants.some(variant => variant.version === version.id));
+      const passed = comparison?.variants.find(variant => variant.version === version.id)?.passed;
+      const rollback = data.expected_release === current?.id && current?.previous === version.id;
+      if (data.environment === 'production' && !rollback && !passed) {
+        throw new InputError('This version must pass its latest Agent evaluation before production release');
+      }
+      return this.save('agent_release', {agent:agent.id, version:version.id,
+        environment:data.environment, previous:current?.version,
+        ...(data.environment === 'production' && passed ? {evaluation:comparison.id} : {})});
+    }
+    if (action === 'agent-evaluations') {
+      const baseline = find('baseline', 'agent_version');
+      const candidate = find('candidate', 'agent_version');
+      if (baseline.id === candidate.id || baseline.agent !== candidate.agent) {
+        throw new InputError('Choose two different versions of the same Agent');
+      }
+      const agent = records.find(item => item.kind === 'agent' && item.id === candidate.agent);
+      if (!agent) throw new InputError('Agent was not found');
+      const dataset = find('dataset', 'dataset');
+      const examples = records.filter(item => item.kind === 'example' && item.dataset === dataset.id).reverse();
+      if (!examples.length || examples.length > 5 || examples.some(item => typeof item.input !== 'string' ||
+        !item.input.trim() || typeof item.expected !== 'string' || !item.expected.trim())) {
+        throw new InputError('Use a dataset with one to five non-empty text inputs and expected replies');
+      }
+      await Promise.all([this.verifyVersionModel(records, baseline), this.verifyVersionModel(records, candidate)]);
+      if ([baseline, candidate].some(version => version.provider === hostedProviderId)) this.billableKey(data.billing_key);
+      const variants = [];
+      for (const version of [baseline, candidate]) {
+        variants.push(await this.evaluateVersion(version, agent, examples, records, data.billing_key));
+      }
+      return this.save('agent_evaluation', {agent:agent.id, dataset:dataset.id, variants});
+    }
     if (action === 'deployments') return this.save('deployment', {
       name:requiredText(data, 'name'), prompt:find('prompt', 'prompt').id
     });
@@ -435,14 +531,27 @@ export class Workspace extends DurableObject {
     }
     if (action === 'runs') {
       const kind = data.target_kind;
-      if (!['agent', 'deployment'].includes(kind)) throw new InputError('Invalid target kind');
-      const target = find('target', kind);
+      if (!['agent', 'deployment', 'agent_release'].includes(kind)) throw new InputError('Invalid target kind');
+      const agent = find('target', kind === 'agent_release' ? 'agent' : kind);
+      let target = agent;
+      let release;
+      if (kind === 'agent_release') {
+        if (!releaseEnvironments.includes(data.environment)) throw new InputError('Choose staging or production');
+        release = records.find(item => item.kind === 'agent_release' && item.agent === agent.id &&
+          item.environment === data.environment);
+        const version = release && records.find(item => item.kind === 'agent_version' && item.id === release.version);
+        if (!version) throw new InputError('No version is published to this environment');
+        await this.verifyVersionModel(records, version);
+        target = {...version, id:agent.id, identifier:agent.identifier};
+      }
+      const attribution = release ? {environment:release.environment, agent_version:release.version,
+        agent_release:release.id} : {environment:'local'};
       if (target.source === 'external') throw new InputError('External agents run in your application');
       if (target.provider === hostedProviderId) {
         if (typeof data.input !== 'string' || !data.input.trim()) throw new InputError('Enter a test message');
         return this.billing.complete({model:hostedModel, messages:[
           {role:'system', content:target.instructions}, {role:'user', content:data.input}
-        ], max_tokens:target.max_tokens}, this.billableKey(data.billing_key), target);
+        ], max_tokens:target.max_tokens}, this.billableKey(data.billing_key), target, attribution);
       }
       const prompt = records.find(item => item.id === target.prompt);
       const provider = records.find(item => item.kind === 'model' && item.id === target.provider);
@@ -464,7 +573,7 @@ export class Workspace extends DurableObject {
       const trace = {...step, name:target.name, target_id:target.id, project:kind + ':' + target.name,
         status:step.error ? 'error' : 'success', tokens, cost:0, steps:[step]};
       if (target.identifier) Object.assign(trace, {
-        agent_id:target.identifier, environment:'local', project:'agent:' + target.identifier
+        agent_id:target.identifier, project:'agent:' + target.identifier, ...attribution
       });
       return this.saveTrace(trace);
     }

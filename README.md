@@ -61,6 +61,16 @@ Cloudflare Workers AI 测试连接使用独立的私有 Worker。新账号部署
 
 ## 开放平台
 
+### 发布 Agent 版本（Cloudflare）
+
+在 **Deployments** 保存 Studio Agent 的当前配置，给版本命名，再选择 **Staging** 或 **Production** 发布。环境独立指向已保存版本，更新 Studio 草稿不会改动已发布配置。若模型 ID 或端点发生变化，已有版本会拒绝运行，直到恢复连接配置或保存并发布新版本。可单独轮换供应商密钥。
+
+发布到 **Production** 前，到 **Experiments → Compare Agent versions** 选择同一 Agent 的两个版本和包含 1–5 条文本示例的数据集。结果保留每条示例的实际与预期回复。系统在去掉首尾空白后做严格匹配，被发布版本须在最近一次比较中全部通过。托管模型评估使用所选 API Key 计费。
+
+在 **Active Agent releases → Run via API** 查看请求参数。调用 `POST /api/platform/runs` 时传 `target_kind: "agent_release"`、Agent 的记录 ID、`environment` 和 `input`。Key 需要 **List and run agents** 权限，托管模型还需要 **Call hosted models**。Trace 会记录环境和版本 ID，托管模型仍使用调用 Key 结算。若需回退，在该环境选择 **Roll back to …**。
+
+用 Node 22.15+ 运行 `node --test tests/agent-releases.test.mjs`，可在内存工作区验证版本隔离、权限、评估结果、发布门槛、回滚和账单归属。
+
 **Models** 支持 DeepSeek、阿里云百炼（北京预设）和自定义 OpenAI 兼容接口。百炼的区域地址要与供应商 API Key 一致，可以填业务空间专属域名。保存后可发消息测试、更新连接或轮换密钥。Agent 可以更换绑定的模型。模型供应商的密钥在后端加密保存，不能从列表读出。保留部署用的 `AGENTOPS_INGEST_TOKEN`，更换它会使已加密的模型密钥和已签发的 Agent Deck API Key 失效。
 
 **Billing → API Keys** 签发的是 Agent Deck 密钥。密钥创建时显示一次，服务端仅保留摘要，支持查看最近使用时间和即时撤销。权限按接口划分：

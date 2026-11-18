@@ -547,3 +547,6 @@ dialog::backdrop {background: #111a3a70}
 .integration-identity code {overflow-wrap:anywhere}
 .integration-command {margin:0; max-width:100%; overflow:auto}
 .agent-identity .pill {margin-top:4px}
+
+.release-entry {display:grid; gap:6px; margin-top:10px; padding-top:10px; border-top:1px solid var(--border)}
+.release-entry .button {margin-top:8px}

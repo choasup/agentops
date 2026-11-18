@@ -7,7 +7,7 @@ const modules = {
   feedback: ['Review Queue', 'Score ingested traces and record reviewer feedback.'],
   prompts: ['Prompts', 'Save and reuse prompt template versions.'],
   playground: ['Playground', 'Test prompt versions with your inputs.'],
-  deployments: ['Deployments', 'Pin a prompt version to a local execution target.'],
+  deployments: ['Deployments', 'Publish saved Agent versions by environment.'],
   agents: ['All agents', 'Build an agent in Studio or connect one that runs in your application.'],
   studio: ['Studio', 'Send a test message and inspect the response and trace.']
 };
@@ -152,11 +152,13 @@ function formPanel(title, fields, label, action) {
   const section = element('section', undefined, 'panel module-panel');
   const form = element('form', undefined, 'module-form');
   const submit = element('button', label, 'button primary');
+  submit.type = 'submit';
   const message = element('p');
   message.setAttribute('role', 'status');
   form.append(...fields, submit, message);
   form.addEventListener('submit', async event => {
     event.preventDefault();
+    if (submit.disabled) return;
     submit.disabled = true;
     message.textContent = '';
     try {
@@ -319,6 +321,7 @@ function renderModule(module, selectedTarget) {
   }
 
   if (module === 'experiments') {
+    if (accountStatus?.user) panels.push(...agentEvaluationPanels());
     panels.push(formPanel('Run exact-match evaluation', [
       nameField(), field('dataset', 'Dataset', options('dataset')), promptField()
     ], 'Run experiment', data => create(module, data)));
@@ -347,6 +350,7 @@ function renderModule(module, selectedTarget) {
   }
 
   if (module === 'deployments') {
+    if (accountStatus?.user) panels.push(...agentReleasePanels());
     panels.push(formPanel('Register deployment', [nameField(), promptField()], 'Register',
       data => create(module, data)));
     panels.push(listPanel(title, ofKind('deployment').map(record =>
@@ -371,6 +375,118 @@ function renderModule(module, selectedTarget) {
   const grid = element('div', undefined, 'module-grid');
   grid.append(...panels);
   platformContent.replaceChildren(heading, grid);
+}
+
+function agentEvaluationPanels() {
+  const versions = ofKind('agent_version');
+  const comparisons = ofKind('agent_evaluation');
+  const datasets = ofKind('dataset');
+  const availableKeys = apiKeys.filter(key => !key.revoked && key.scopes.includes('models:invoke'));
+  const choices = versions.map(version => [version.id, recordName(version.agent) + ' · ' + version.label]);
+  const report = listPanel('Agent evaluation results', comparisons.map(item => {
+    const variants = item.variants.map(variant => {
+      const version = versions.find(value => value.id === variant.version);
+      const passed = variant.results.filter(result => result.passed).length;
+      return expandable((version?.label ?? variant.version) + ' · ' + passed + '/' + variant.results.length, variant.results);
+    });
+    const section = element('div', undefined, 'release-entry');
+    section.append(element('strong', recordName(item.agent) + ' · ' + recordName(item.dataset)),
+      element('small', timeLabel(item.at)), ...variants);
+    return section;
+  }));
+  if (versions.length < 2 || !datasets.length) return [listPanel('Compare Agent versions', [
+    element('p', 'Save two versions of the same Agent in Deployments and add a dataset with expected text replies.')
+  ]), report];
+  const baseline = field('baseline', 'Baseline version', choices);
+  const candidate = field('candidate', 'Candidate version', choices);
+  const billingKey = field('billing_key', 'API key for hosted calls', availableKeys.map(key => [key.id, key.name]));
+  const select = billingKey.querySelector('select');
+  const setup = formPanel('Compare Agent versions', [
+    element('p', 'Run both versions against the same dataset of one to five text examples. Production requires a full pass. Hosted requests consume your balance.'),
+    field('dataset', 'Dataset', datasets.map(dataset => [dataset.id, dataset.name])), baseline, candidate, billingKey
+  ], 'Run comparison', async data => {
+    await platformRequest('/agent-evaluations', data);
+    await loadModule('experiments');
+  });
+  const versionFields = [baseline, candidate].map(label => label.querySelector('select'));
+  function updateBillingField() {
+    const hosted = versionFields.some(input => versions.find(version => version.id === input.value)?.provider === hostedProvider);
+    billingKey.hidden = !hosted;
+    select.disabled = !hosted;
+  }
+  if (availableKeys.length === 1) select.value = availableKeys[0].id;
+  for (const input of versionFields) input.addEventListener('change', updateBillingField);
+  updateBillingField();
+  if (!availableKeys.length) {
+    const link = iconButton('wallet', 'Open Billing to create a key', 'button quiet');
+    link.addEventListener('click', () => loadModule('billing'));
+    setup.append(link);
+  }
+  return [setup, report];
+}
+
+function agentReleasePanels() {
+  const agents = ofKind('agent').filter(agent => agent.source !== 'external');
+  const versions = ofKind('agent_version');
+  const releases = ofKind('agent_release');
+  const byVersion = new Map(versions.map(version => [version.id, version]));
+  const env = [['staging', 'Staging'], ['production', 'Production']];
+  const save = agents.length ? formPanel('Save an Agent version', [
+    field('agent', 'Agent', agents.map(agent => [agent.id, agent.name])),
+    field('label', 'Version label')
+  ], 'Save version', async data => {
+    await platformRequest('/agent-versions', data);
+    await loadModule('deployments');
+  }) : listPanel('Agent versions', [element('p', 'Create a Studio Agent first.')]);
+  const versionOptions = versions.map(version => [version.id, recordName(version.agent) + ' · ' + version.label]);
+  const publish = versions.length ? formPanel('Publish a saved version', [
+    element('p', 'Production requires the version to pass its latest Agent evaluation. Staging is available for testing.'),
+    field('version', 'Version', versionOptions), field('environment', 'Environment', env)
+  ], 'Publish version', async data => {
+    await platformRequest('/agent-releases', data);
+    await loadModule('deployments');
+  }) : listPanel('Publish a saved version', [element('p', 'Save a version before publishing.')]);
+  const active = new Map();
+  for (const release of releases) {
+    const key = release.agent + ':' + release.environment;
+    if (!active.has(key)) active.set(key, release);
+  }
+  const deployments = listPanel('Active Agent releases', Array.from(active.values(), release => {
+    const name = recordName(release.agent);
+    const version = byVersion.get(release.version);
+    const item = element('section', undefined, 'release-entry');
+    item.append(element('strong', name + ' · ' + release.environment),
+      element('p', (version?.label ?? release.version) + ' · ' + timeLabel(release.at)));
+    const request = {target_kind:'agent_release', target:release.agent, environment:release.environment, input:'Your message'};
+    item.append(expandable('Run via API', {endpoint:'POST /api/platform/runs', required_scope:'agents:run',
+      ...(version?.provider === hostedProvider ? {hosted_model_scope:'models:invoke'} : {}), body:request}));
+    const previous = byVersion.get(release.previous);
+    if (previous) {
+      const disclosure = element('details');
+      disclosure.append(element('summary', 'Roll back to ' + previous.label));
+      const rollback = element('button', 'Confirm rollback', 'button');
+      const status = element('p');
+      status.setAttribute('role', 'status');
+      rollback.addEventListener('click', async () => {
+        rollback.disabled = true;
+        try {
+          await platformRequest('/agent-releases', {version:previous.id, environment:release.environment,
+            expected_release:release.id});
+          await loadModule('deployments');
+        } catch (error) {
+          status.textContent = error.message;
+          rollback.disabled = false;
+        }
+      });
+      disclosure.append(rollback, status);
+      item.append(disclosure);
+    }
+    return item;
+  }));
+  const history = listPanel('Saved Agent versions', versions.map(version => expandable(
+    recordName(version.agent) + ' · ' + version.label, {id:version.id, model:version.model,
+      max_tokens:version.max_tokens, instructions:version.instructions})));
+  return [save, publish, deployments, history];
 }
 
 function brandMark() {
@@ -977,6 +1093,11 @@ async function loadModule(module, selectedTarget) {
   });
   try {
     if (module === 'feedback') await refresh();
+    if (module === 'experiments' && accountStatus?.user) {
+      const nextKeys = await keyRequest();
+      if (activeModule !== module || platformContent.hidden) return;
+      apiKeys = nextKeys;
+    }
     if (['billing','models','agents','studio'].includes(module)) {
       const nextBilling = await billingRequest();
       const nextKeys = module === 'billing' || (module === 'studio' && nextBilling) ? await keyRequest() : null;
