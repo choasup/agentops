@@ -269,22 +269,37 @@ function connectionCard(provider) {
 }
 
 function openConnectionImport() {
-  const input = field('command', 'Install command or URL', 'textarea');
-  input.querySelector('textarea').placeholder = 'https://docs.mcp.cloudflare.com/mcp';
-  const examples = element('details');
-  examples.append(element('summary', 'Supported install commands'),
-    element('code', 'codex mcp add cloudflare-docs --url ' + connectionCatalogue[0].source),
-    element('code', connectionCatalogue[1].source));
-  const form = formPanel('Find a connector', [input, examples], 'Review connection', data => {
+  const fieldLabel = field('command', 'Connector link or MCP command', 'textarea');
+  const input = fieldLabel.querySelector('textarea');
+  input.rows = 2;
+  input.placeholder = 'Paste a link or an MCP add command';
+  const hint = element('p', 'Paste a link or a command you already have. Agent Deck uses it to find a supported connector and show its permissions.');
+  hint.id = 'connection-import-hint';
+  input.setAttribute('aria-describedby', hint.id);
+  const form = formPanel('Find a connector', [fieldLabel, hint], 'Review access', data => {
     const entered = data.command.trim();
     const provider = connectionCatalogue.find(item => [item.source, item.id].includes(entered)) ??
       (/^(?:claude mcp add --transport http|codex mcp add) [\w-]+ (?:--url )?https:\/\/docs\.mcp\.cloudflare\.com\/mcp$/.test(entered)
         ? connectionCatalogue[0] : undefined);
-    if (!provider) throw new Error('No matching connector. Choose a supported command or URL.');
+    if (!provider) throw new Error('This connector is unavailable. Choose one of the connectors below.');
     openConnectionReview(provider);
   });
+  form.firstElementChild.remove();
   form.classList.add('connection-install');
-  openModal('Add a connection', [form]);
+  const shortcuts = element('div', undefined, 'connection-shortcuts');
+  shortcuts.append(element('h3', 'Choose a supported connector'));
+  const actions = element('div', undefined, 'section-actions');
+  for (const provider of connectionCatalogue) {
+    const button = element('button', undefined, 'button');
+    button.type = 'button';
+    button.setAttribute('aria-label', provider.name);
+    button.append(connectionIdentity(provider), element('span',
+      provider.id === 'cloudflare-docs' ? 'Docs MCP' : 'agentops README'));
+    button.addEventListener('click', () => openConnectionReview(provider));
+    actions.append(button);
+  }
+  shortcuts.append(actions);
+  openModal('Add by link or command', [form, shortcuts]);
 }
 
 function openSkillImport() {
@@ -341,7 +356,7 @@ function renderModule(module, selectedTarget) {
   }
 
   if (module === 'connections') {
-    const install = iconButton('terminal', 'Paste install command', 'button');
+    const install = iconButton('terminal', 'Add by link or command', 'button');
     install.addEventListener('click', openConnectionImport);
     heading.append(install);
     panels.push(...connectionCatalogue.map(connectionCard));

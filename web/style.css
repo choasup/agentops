@@ -598,7 +598,11 @@ dialog::backdrop {background: #111a3a70}
 .connection-identity img[src$="cloudflare.png"] + span {display:none}
 .connection-card > p {color:var(--muted)}
 .connection-card-head > .button {margin-inline-start:auto}
-.connection-install details code {display:block; margin-block:6px; overflow-wrap:anywhere}
+.connection-install textarea {min-height:64px}
+.connection-install #connection-import-hint {font-size:12px; color:var(--muted)}
+.connection-shortcuts {display:grid; gap:8px; border-top:1px solid var(--border); margin-top:14px; padding-top:12px}
+.connection-shortcuts .button {flex-wrap:wrap; font-size:12px}
+.connection-shortcuts .connection-identity img {height:18px; max-width:65px}
 .skill-library-item {padding:8px 0}
 .skill-library-item + .skill-library-item {border-top:1px solid var(--border)}
 .skill-library-item > p {margin-top:8px; color:var(--muted)}
