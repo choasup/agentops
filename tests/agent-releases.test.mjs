@@ -277,7 +277,7 @@ test('published Agent configuration is isolated by workspace and environment and
   const bot = {agent:agent.id, environment:'staging', botId:'fixture-bot'};
   const wecomTurn = async (msgid, chattype, chatid, userid) => {
     await gateway.onMessage(gateway.socket, bot, JSON.stringify({cmd:'aibot_msg_callback',
-      headers:{req_id:msgid}, body:{msgid, chattype, chatid, from:{userid}, text:{content:msgid}}}));
+      headers:{req_id:msgid}, body:{msgid, msgtype:'text', chattype, chatid, from:{userid}, text:{content:msgid}}}));
     return (await request('/api/traces')).data.find(item => item.input === msgid);
   };
   const direct = await wecomTurn('direct-one', 'single', undefined, 'sender-one');
@@ -290,4 +290,12 @@ test('published Agent configuration is isolated by workspace and environment and
   assert.notEqual(direct.session_id, group.session_id);
   assert.equal(direct.delivery, 'replied');
   assert.equal(direct.output, replies[0]);
+  await gateway.onMessage(gateway.socket, bot, JSON.stringify({cmd:'aibot_msg_callback',
+    headers:{req_id:'test-image'}, body:{msgtype:'image', image:{url:'private fixture'}}}));
+  assert.deepEqual(gateway.diagnostics.slice(-3), [
+    {event:'message:text', result:'accepted'},
+    {event:'message:text', result:'replied'},
+    {event:'message:image', result:'no_supported_text'}
+  ]);
+  assert.equal(gateway.diagnostics.length, 9);
 });

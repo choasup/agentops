@@ -1009,11 +1009,19 @@ function openHostedWeCom(agentId, environments, onStatus) {
   const disconnect = element('button', 'Disconnect bot', 'button quiet');
   disconnect.hidden = true;
   current.append(refreshStatus, disconnect);
-  heading.append(element('p', 'Cloudflare hosts this connection. Replies use the selected release and the workspace balance.'), status, current);
+  const diagnostics = element('details');
+  const events = element('pre', 'No gateway events recorded yet.');
+  diagnostics.hidden = true;
+  diagnostics.append(element('summary', 'Gateway diagnostics'), events);
+  heading.append(element('p', 'Cloudflare hosts this connection. Replies use the selected release and the workspace balance.'), status, current, diagnostics);
   async function update(data) {
     try {
       const result = data ?? await platformRequest('/wecom-status');
       renderWeComStatus(status, result, agentId);
+      diagnostics.hidden = result.agent !== agentId;
+      events.textContent = result.agent === agentId && result.diagnostics?.length
+        ? result.diagnostics.map(({event, result}) => event + ' · ' + result).join('\n')
+        : 'No gateway events recorded yet.';
       onStatus?.(result);
       disconnect.hidden = !result.agent;
     } catch (error) {status.textContent = error.message;}

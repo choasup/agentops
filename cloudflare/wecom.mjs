@@ -1,5 +1,6 @@
 // One outbound WeCom connection per workspace. Storage alarms recover it after eviction.
 const configKey = 'wecom-bot';
+const messageTypes = new Set(['text', 'image', 'voice', 'video', 'file', 'mixed', 'markdown', 'location', 'link']);
 export class WeComGateway {
   constructor(ctx, decrypt, run, recordDelivery) {
     this.ctx = ctx;
@@ -9,13 +10,19 @@ export class WeComGateway {
     this.status = 'connecting';
     this.seen = new Map();
     this.pendingReplies = new Map();
+    this.diagnostics = [];
+  }
+
+  diagnostic(event, result) {
+    this.diagnostics.push({event, result});
+    if (this.diagnostics.length > 32) this.diagnostics.shift();
   }
 
   async getStatus() {
     const config = await this.ctx.storage.get(configKey);
     return config ? {agent:config.agent, environment:config.environment,
       status:this.status, detail:this.detail, lastTrace:await this.ctx.storage.get('wecom-trace'),
-      delivery:await this.ctx.storage.get('wecom-delivery')} :
+      delivery:await this.ctx.storage.get('wecom-delivery'), diagnostics:this.diagnostics} :
       {status:'disconnected'};
   }
 
@@ -24,6 +31,7 @@ export class WeComGateway {
     this.status = 'connecting';
     this.detail = undefined;
     this.seen.clear();
+    this.diagnostics.length = 0;
     await this.ctx.storage.delete(['wecom-trace','wecom-delivery']);
     if (config) {
       await this.ctx.storage.put(configKey, config);
@@ -121,29 +129,44 @@ export class WeComGateway {
   }
 
   async onMessage(socket, config, data) {
-    if (this.socket !== socket || typeof data !== 'string' || data.length > 100_000) return;
-    const frame = JSON.parse(data);
-    const request = frame.headers?.req_id;
-    if (typeof request !== 'string') return;
+    if (this.socket !== socket) return this.diagnostic('unclassified', 'stale_socket');
+    if (typeof data !== 'string') return this.diagnostic('unclassified', 'non_text_frame');
+    if (data.length > 100_000) return this.diagnostic('unclassified', 'oversize');
+    let frame;
+    try {frame = JSON.parse(data);}
+    catch {return this.diagnostic('unclassified', 'invalid_json');}
+    const type = frame?.body?.msgtype;
+    const event = frame?.cmd === 'aibot_msg_callback'
+      ? 'message:' + (messageTypes.has(type) ? type : 'other')
+      : frame?.cmd === 'aibot_event_callback' ? 'event_callback' : 'other_frame';
+    const request = frame?.headers?.req_id;
+    if (typeof request !== 'string') return this.diagnostic(event, 'missing_request');
+
     if (request.startsWith('aibot_subscribe_')) {
       this.status = frame.errcode === 0 ? 'connected' : 'authentication failed';
       this.detail = frame.errcode === 0 ? undefined : 'WeCom error ' + frame.errcode;
       this.lastAck = Date.now();
-      return;
+      return this.diagnostic('subscription', this.status === 'connected' ? 'accepted' : 'rejected');
     }
-    if (request.startsWith('ping_') && frame.errcode === 0) this.lastAck = Date.now();
+    if (request.startsWith('ping_')) {
+      if (frame.errcode === 0) this.lastAck = Date.now();
+      return this.diagnostic('heartbeat', frame.errcode === 0 ? 'accepted' : 'rejected');
+    }
     if (frame.cmd !== 'aibot_msg_callback') {
       const pending = this.pendingReplies.get(request);
       if (pending?.socket === socket && Number.isInteger(frame.errcode)) {
         this.pendingReplies.delete(request);
         pending.finish(frame);
+        return;
       }
-      return;
+      return this.diagnostic(event, 'ignored');
     }
-    if (this.status !== 'connected') return;
+    if (this.status !== 'connected') return this.diagnostic(event, 'not_connected');
     const text = frame.body?.text?.content;
     const key = frame.body?.msgid ?? request;
-    if (typeof text !== 'string' || !text.trim() || this.seen.has(key)) return;
+    if (typeof text !== 'string' || !text.trim()) return this.diagnostic(event, 'no_supported_text');
+    if (this.seen.has(key)) return this.diagnostic(event, 'duplicate');
+    this.diagnostic(event, 'accepted');
     this.seen.set(key, true);
     if (this.seen.size > 2048) this.seen.delete(this.seen.keys().next().value);
     const id = crypto.randomUUID();
@@ -152,6 +175,7 @@ export class WeComGateway {
     try {
       await Promise.all([this.updateDelivery(socket, key, 'received'), acknowledgement]);
     } catch (error) {
+      this.diagnostic(event, 'acknowledgement_failed');
       await this.updateDelivery(socket, key, 'reply_failed', error.message);
       return;
     }
@@ -173,16 +197,19 @@ export class WeComGateway {
       content = '暂时无法回复，请稍后重试。';
     }
     if (this.socket !== socket) {
+      this.diagnostic(event, 'socket_replaced');
       if (traceId) this.recordDelivery(traceId, 'reply_failed');
       return;
     }
     try {
       await this.reply(socket, request, id, Array.from(content).slice(0, 2048).join(''), true);
     } catch (error) {
+      this.diagnostic(event, 'reply_failed');
       if (traceId) this.recordDelivery(traceId, 'reply_failed');
       await this.updateDelivery(socket, key, 'reply_failed', error.message);
       return;
     }
+    this.diagnostic(event, failure ? 'fallback_replied' : 'replied');
     if (traceId) this.recordDelivery(traceId, failure ? 'fallback_replied' : 'replied');
     await this.updateDelivery(socket, key, failure ? 'agent_failed' : 'replied', failure);
   }
