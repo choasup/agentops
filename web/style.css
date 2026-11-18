@@ -698,17 +698,18 @@ dialog::backdrop {background: #111a3a70}
 .session-identity strong {flex-shrink:0; max-width:55%}
 .session-identity span, .session-context, .session-count, .trace-session time {font-size:12px; color:var(--muted)}
 .session-count {display:flex; align-items:center; gap:6px}
-.session-turn-table table {min-width:670px; table-layout:fixed}
+.session-turn-table table {min-width:610px; table-layout:fixed}
 .session-turn-table th, .session-turn-table td {padding:7px 10px; text-align:left}
 .session-turn-table th:first-child, .session-turn-table td:first-child {width:88px; padding-left:16px}
 .session-turn-table th:nth-child(4) {width:105px}
 .session-turn-table th:nth-child(5) {width:124px}
-.session-turn-table th:last-child {width:62px}
 .session-turn-table tbody tr:last-child td {border-bottom:0}
 .session-turn-table td {vertical-align:middle; font-size:12px}
 .session-turn-table td small {display:block; color:var(--muted); margin-top:2px}
 .session-turn-table .pill {font-size:11px; padding:2px 6px}
-.session-turn-table .button {min-height:26px; padding:2px 4px; font-size:12px}
+.session-turn-link {display:block; color:inherit; text-decoration:none}
+.session-turn-link:hover, .session-turn-link:focus-visible {text-decoration:underline; text-underline-offset:3px}
+.session-turn-table tbody tr:focus-within {background:#f7f8fc}
 .session-turn-preview {display:-webkit-box; overflow:hidden; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow-wrap:anywhere; white-space:pre-line; line-height:1.4}
 .trace-sample-output pre {white-space:pre-wrap; overflow-wrap:anywhere}
 #tracing-content #description:empty {display:none}

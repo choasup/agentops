@@ -237,7 +237,7 @@ function sessionTurns(turns) {
   const table = element('table');
   table.setAttribute('aria-label', 'Session turns');
   const headers = table.createTHead().insertRow();
-  for (const label of ['Time', 'Input', 'Response', 'Status', 'Usage', 'Trace']) {
+  for (const label of ['Time', 'Input', 'Response', 'Status', 'Usage']) {
     const cell = element('th', label);
     cell.scope = 'col';
     headers.append(cell);
@@ -253,7 +253,16 @@ function sessionTurns(turns) {
     time.dateTime = trace.at;
     time.title = new Date(trace.at).toLocaleString();
     row.insertCell().append(time);
-    row.insertCell().append(preview(trace.input));
+    const input = preview(trace.input);
+    const open = traceLink(trace.id, '');
+    open.className = 'session-turn-link';
+    open.append(input, element('span', ' (view trace at ' + time.textContent + ')', 'sr'));
+    open.addEventListener('click', event => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      showTrace(trace);
+    });
+    row.insertCell().append(open);
     row.insertCell().append(preview(trace.error ?? trace.output));
     const status = row.insertCell();
     status.append(statusPill(runStatus(trace)));
@@ -267,10 +276,6 @@ function sessionTurns(turns) {
     const usage = row.insertCell();
     usage.append(element('span', latency(trace.duration) + ' · ' + number.format(trace.tokens) + ' tokens'),
       element('small', typeof trace.cost_nanos === 'number' ? billingMoney(trace.cost_nanos) : money(trace.cost)));
-    const open = element('button', 'Open', 'button quiet');
-    open.setAttribute('aria-label', 'View trace at ' + time.textContent);
-    open.addEventListener('click', () => showTrace(trace));
-    row.insertCell().append(open);
   }
   wrap.append(table);
   return wrap;
