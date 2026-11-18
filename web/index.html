@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Agent Deck</title>
 <link rel="icon" type="image/png" href="mark.png">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=account-popover">
 <script src="app.js" defer></script>
 <script src="platform.js" defer></script>
 <script src="models.js" defer></script>
 <script src="selects.js" defer></script>
-<script src="account.js" defer></script>
+<script src="account.js?v=account-popover" defer></script>
 </head>
 <body>
 <section id="sign-in" class="sign-in" hidden>
@@ -68,8 +68,11 @@
   <header class="top">
     <span class="breadcrumb"><span id="workspace-area">Home</span> <b aria-hidden="true">/</b> <strong id="crumb">All agents</strong></span>
     <div class="header-actions">
-      <button id="account" class="button account-button" hidden>登录</button>
       <button id="connect" class="button primary"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="icons.svg#plus"/></svg><span>New agent</span></button>
+      <div class="account-control" hidden>
+        <button id="account" type="button" class="button account-button">登录</button>
+        <div id="account-popover" class="account-popover" hidden></div>
+      </div>
     </div>
   </header>
   <div class="content" id="tracing-content" hidden>

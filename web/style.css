@@ -105,7 +105,6 @@ pre {
 .breadcrumb b {padding: 0 7px; color: #91a0b7; font-weight: 400}
 .breadcrumb strong {color: var(--ink); font-weight: 650}
 .header-actions {display: flex; justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: wrap}
-.account-button {max-width: 220px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis}
 .button, select, input, textarea {
   min-height: 38px;
   border: 1px solid var(--border);
@@ -484,7 +483,26 @@ dialog::backdrop {background: #111a3a70}
 .hosted-model-panel {display:grid; justify-items:start; gap:10px}
 .hosted-model-panel .provider-identity {flex-wrap:wrap}
 
-.account-button > span {overflow:hidden; text-overflow:ellipsis}
+.account-control {position:relative; flex:none}
+.account-button[aria-controls] {padding:3px 7px 3px 4px; gap:5px; border-color:transparent; box-shadow:none}
+.account-button[aria-controls]:hover, .account-button[aria-expanded="true"] {background:var(--canvas); border-color:var(--border)}
+.account-button > .ui-icon {width:13px; height:13px; color:var(--muted)}
+.account-avatar {display:grid; place-items:center; flex:none; width:30px; height:30px; border-radius:50%; background:var(--accent-soft); color:var(--accent-dark); font-size:13px; font-weight:700}
+.account-popover {position:absolute; z-index:6; top:calc(100% + 8px); inset-inline-end:0; width:min(248px, calc(100vw - 24px)); padding:5px; border:1px solid var(--border); border-radius:12px; background:var(--surface); box-shadow:0 10px 30px #17234524}
+.account-identity {display:flex; align-items:center; gap:10px; padding:9px; margin-bottom:4px; border-bottom:1px solid var(--border)}
+.account-identity-details {display:grid; min-width:0; font-size:13px}
+.account-identity-details span {color:var(--muted); overflow-wrap:anywhere}
+.account-action {display:flex; align-items:center; gap:9px; width:100%; min-height:36px; padding:7px 9px; border:0; border-radius:6px; color:var(--ink); background:transparent; text-align:start; cursor:pointer}
+.account-action:hover, .account-action:focus-visible {background:var(--canvas)}
+.account-action .ui-icon {width:16px; height:16px; color:var(--muted)}
+.account-sign-out, .account-sign-out .ui-icon, .account-notice[data-error] {color:#a72d3d}
+.account-notice {font-size:13px}
+.account-notice:empty {display:none}
+.account-popover .account-notice {padding:5px 9px}
+#modal:has(.account-password) {width:min(420px,calc(100% - 24px))}
+#modal-body .account-password .module-form {margin:0}
+.account-password small {font-weight:400; color:var(--muted)}
+.account-password-actions {display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; margin-top:5px}
 .provider-action {display:inline-flex; align-items:center; gap:5px}
 .provider-action .ui-icon {width:15px; height:15px}
 .nav.active .ui-icon {stroke-width:1.9}

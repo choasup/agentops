@@ -190,47 +190,131 @@ function showAccountFlow(purpose, inline = false) {
   }
 }
 
-function accountSettings() {
-  const user = accountStatus.user;
-  const password = field('password', '新密码（至少 12 个字符）', 'password');
+const accountControl = accountButton.parentElement;
+const accountPopover = byId('account-popover');
+
+function setAccountPopover(open, restoreFocus = false) {
+  accountPopover.hidden = !open;
+  accountButton.setAttribute('aria-expanded', String(open));
+  if (restoreFocus) accountButton.focus();
+}
+
+function showPasswordDialog() {
+  const title = accountStatus.user.has_password ? 'Change password' : 'Set password';
+  const root = element('div', undefined, 'account-password');
+  const password = field('password', 'New password', 'password');
   const input = password.querySelector('input');
   input.autocomplete = 'new-password';
   input.minLength = 12;
   input.maxLength = 128;
-  const form = formPanel(user.has_password ? '修改密码' : '设置密码', [password], '保存密码', async () => {
-    await authRequest('password', {password:input.value});
-    input.value = '';
-    form.querySelector('[role=status]').textContent = '密码已保存。下次使用新密码登录。';
+  input.setAttribute('aria-describedby', 'account-password-hint');
+  const hint = element('small', 'Use at least 12 characters.');
+  hint.id = 'account-password-hint';
+  password.append(hint);
+
+  const form = element('form', undefined, 'module-form');
+  const actions = element('div', undefined, 'account-password-actions');
+  const cancel = element('button', 'Cancel', 'button');
+  cancel.type = 'button';
+  cancel.addEventListener('click', () => byId('modal').close());
+  const save = element('button', 'Save password', 'button primary');
+  save.type = 'submit';
+  const notice = element('p', undefined, 'account-notice');
+  notice.setAttribute('role', 'status');
+  actions.append(cancel, save);
+  form.append(password, notice, actions);
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (save.disabled) return;
+    save.disabled = true;
+    notice.textContent = '';
+    delete notice.dataset.error;
+    try {
+      await authRequest('password', {password:input.value});
+      accountStatus.user.has_password = true;
+      byId('account-password-action').querySelector('span').textContent = 'Change password';
+      input.value = '';
+      notice.textContent = 'Password saved.';
+    } catch (error) {
+      notice.dataset.error = 'true';
+      notice.textContent = error.message;
+    } finally {
+      save.disabled = false;
+    }
   });
-  const logout = element('button', '退出登录', 'button');
-  const status = element('p');
-  status.setAttribute('role', 'status');
+  root.append(form);
+  setAccountPopover(false, true);
+  openModal(title, [root]);
+  input.focus();
+}
+
+function renderAccountControl() {
+  const user = accountStatus.user;
+  accountControl.hidden = false;
+  if (!user) return;
+
+  const address = user.email ?? user.phone ?? '';
+  const avatar = () => {
+    const badge = element('span', user.email ? Array.from(user.email)[0]?.toUpperCase() : undefined, 'account-avatar');
+    badge.setAttribute('aria-hidden', 'true');
+    if (!badge.textContent) badge.append(icon('user'));
+    return badge;
+  };
+  accountButton.setAttribute('aria-label', 'Account');
+  accountButton.setAttribute('aria-controls', accountPopover.id);
+  accountButton.replaceChildren(avatar(), icon('chevron-down'));
+
+  const identity = element('div', undefined, 'account-identity');
+  const details = element('div', undefined, 'account-identity-details');
+  details.append(element('strong', 'Signed in'), element('span', address));
+  identity.append(avatar(), details);
+  const password = iconButton('key', user.has_password ? 'Change password' : 'Set password', 'account-action');
+  password.id = 'account-password-action';
+  password.addEventListener('click', showPasswordDialog);
+  const logout = iconButton('logout', 'Sign out', 'account-action account-sign-out');
+  logout.querySelector('use').setAttribute('href', 'icons.svg?v=account-popover#logout');
+  const notice = element('p', undefined, 'account-notice');
+  notice.dataset.error = 'true';
+  notice.setAttribute('role', 'status');
   logout.addEventListener('click', async () => {
     logout.disabled = true;
+    notice.textContent = '';
     try {
       await authRequest('logout', {});
       location.reload();
     } catch (error) {
-      status.textContent = error.message;
+      notice.textContent = error.message;
       logout.disabled = false;
     }
   });
-  return [element('p', user.email ?? user.phone), form, logout, status];
+  accountPopover.replaceChildren(identity, password, logout, notice);
+  setAccountPopover(false);
 }
 
 accountButton.addEventListener('click', () => {
   if (!accountStatus) return;
-  if (accountStatus.user) openModal('账号设置', accountSettings());
+  if (accountStatus.user) setAccountPopover(accountPopover.hidden);
   else showAccountFlow('login');
+});
+
+document.addEventListener('click', event => {
+  if (!accountPopover.hidden && !accountControl.contains(event.target)) setAccountPopover(false);
+});
+accountControl.addEventListener('focusout', event => {
+  if (!accountPopover.hidden && !accountControl.contains(event.relatedTarget)) setAccountPopover(false);
+});
+accountControl.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !accountPopover.hidden) {
+    event.preventDefault();
+    setAccountPopover(false, true);
+  }
 });
 
 async function boot() {
   try {
     accountStatus = await authRequest('status');
     if (accountStatus) {
-      accountButton.hidden = false;
-      accountButton.replaceChildren(icon('user'),
-        element('span', accountStatus.user?.email ?? accountStatus.user?.phone ?? '登录'));
+      renderAccountControl();
       document.querySelectorAll('[data-cloud]').forEach(item => { item.hidden = false; });
       if (accountStatus.required && !accountStatus.user) {
         const requested = new URL(location.href).searchParams.get('auth');
