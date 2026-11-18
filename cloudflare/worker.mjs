@@ -732,7 +732,9 @@ export class Workspace extends DurableObject {
         ({id, identifier, name, source}) => ({id, identifier, name, source})
       ));
       if (pathname === '/api/traces') return json(this.rows('traces'));
-      if (pathname === '/api/platform') return json(this.rows('records').map(publicRecord));
+      if (pathname === '/api/platform') return json(this.rows('records').map(publicRecord), 200, {
+        'X-Agent-Deck-Hosted-Model': this.env.DEEPSEEK_API_KEY ? 'available' : 'unavailable'
+      });
     }
     if (request.method === 'POST') {
       try {

@@ -366,7 +366,9 @@ dialog::backdrop {background: #111a3a70}
 .studio-model {border:1px solid var(--border); color:var(--muted); border-radius:6px; padding:3px 7px; font-size:11px; overflow-wrap:anywhere}
 .studio-split {display:grid; grid-template-columns:minmax(0,1fr) minmax(170px, 24%)}
 .studio-history {padding:16px 10px; border-left:1px solid var(--border); min-width:0; background:#fbfcfe; border-radius:0 0 10px 0}
-.studio-history h2 {font-size:12px; padding:0 7px 10px}
+.studio-history-heading {display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:4px; padding:0 7px 10px}
+.studio-history h2 {font-size:12px}
+.studio-history-heading .button {min-height:28px; padding:3px 5px; font-size:11px}
 .studio-run-list {display:grid; align-content:start; gap:3px; max-height:480px; overflow:auto}
 .studio-run {display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; gap:4px; padding:8px; border:1px solid transparent; border-radius:7px; background:none; text-align:left; color:var(--ink)}
 .studio-run:hover {background:#f0f2fa}

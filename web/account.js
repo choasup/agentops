@@ -325,6 +325,7 @@ async function boot() {
     }
     byId('workspace-label').textContent = accountStatus?.user ? 'Personal workspace' : 'Local workspace';
     byId('workspace-shell').hidden = false;
+    byId('boot-screen').hidden = true;
     startTraceMonitoring();
     await loadModule(new URL(location.href).searchParams.has('checkout') ? 'billing' : 'agents');
   } catch (error) {

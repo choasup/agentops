@@ -12,8 +12,8 @@ const modules = {
   deployments: ['Deployments', 'Publish saved Agent versions by environment.'],
   agent: ['Agent', ''],
   'console-agents': ['Agents', 'Manage Agent versions, evaluations, and releases.'],
-  agents: ['All agents', 'Build an agent in Studio or connect one that runs in your application.'],
-  studio: ['Studio', 'Send a test message and inspect the response and trace.']
+  agents: ['All agents', 'Find your agents, check recent activity, and manage integrations.'],
+  studio: ['Studio', 'Try a test message with a Studio agent or deployment.']
 };
 const lifecycleTabs = [['versions', 'Versions'], ['evaluations', 'Evaluations'], ['releases', 'Releases']];
 let activeModule;
@@ -21,6 +21,8 @@ let moduleRequest = 0;
 let records = [];
 let apiKeys = [];
 let billing;
+let workspaceCatalog;
+let hostedModelAvailable = false;
 const billingMoney = nanos => new Intl.NumberFormat('en-US', {
   style:'currency', currency:'USD', maximumFractionDigits:9
 }).format(nanos / 1e9);
@@ -121,7 +123,7 @@ const ofKind = kind => records.filter(record => record.kind === kind);
 const hostedProvider = 'hosted:deepseek';
 const recordName = id => id === hostedProvider ? 'DeepSeek Flash · Hosted' : records.find(record => record.id === id)?.name ?? id;
 const studioModels = () => [
-  ...(billing?.model_available ? [[hostedProvider, recordName(hostedProvider)]] : []),
+  ...(hostedModelAvailable ? [[hostedProvider, recordName(hostedProvider)]] : []),
   ...ofKind('model').map(model => [model.id, model.name])
 ];
 const promptOptions = () => ofKind('prompt').map(record => {
@@ -129,13 +131,35 @@ const promptOptions = () => ofKind('prompt').map(record => {
   return [record.id, record.name + ' · v' + (history.length - history.indexOf(record))];
 });
 
-async function platformRequest(path = '', data) {
+function platformRequest(path = '', data) {
+  if (path || data !== undefined) {
+    return requestPlatform(path, data).then(({value}) => {
+      if (data !== undefined && path !== '/runs') workspaceCatalog = undefined;
+      return value;
+    });
+  }
+  if (workspaceCatalog && Date.now() < workspaceCatalog.expires) return workspaceCatalog.promise;
+  const entry = {expires:Infinity};
+  workspaceCatalog = entry;
+  entry.promise = requestPlatform('').then(({value, response}) => {
+    entry.expires = Date.now() + 15_000;
+    if (workspaceCatalog === entry) hostedModelAvailable =
+      response.headers.get('X-Agent-Deck-Hosted-Model') === 'available';
+    return value;
+  }).catch(error => {
+    if (workspaceCatalog === entry) workspaceCatalog = undefined;
+    throw error;
+  });
+  return entry.promise;
+}
+
+async function requestPlatform(path, data) {
   const response = await fetch('/api/platform' + path, data === undefined ? {cache:'no-store'} : {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
   });
   const value = await response.json();
   if (!response.ok) throw Object.assign(new Error(value.error ?? 'Request failed'), {status:response.status});
-  return value;
+  return {value, response};
 }
 
 function field(name, label, type = 'text', value = '') {
@@ -1069,10 +1093,14 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
   const configure = iconButton('settings', 'Configure', 'button');
   configure.setAttribute('aria-haspopup', 'dialog');
   toolbar.append(selector, model, configure);
+  const newTest = iconButton('plus', 'New test', 'button quiet');
+  newTest.hidden = true;
 
   const split = element('div', undefined, 'studio-split');
   const history = element('aside', undefined, 'studio-history');
-  history.append(element('h2', 'Run history'));
+  const historyHeading = element('div', undefined, 'studio-history-heading');
+  historyHeading.append(element('h2', 'Run history'), newTest);
+  history.append(historyHeading);
   const runList = element('div', undefined, 'studio-run-list');
   history.append(runList);
   const stage = element('div', undefined, 'studio-stage');
@@ -1102,6 +1130,7 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
 
   let pending = false;
   let selectedRun;
+  let showLatest = Boolean(onAgentUpdate);
   let requestTrace;
   const current = () => targets.find(target => target.id === targetInput.value);
   const setNotice = (text = '', error = false, showBilling = false) => {
@@ -1112,6 +1141,7 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
   const updateRunButton = () => {
     send.disabled = pending || !message.value.trim();
     configure.disabled = pending;
+    newTest.disabled = pending;
     send.querySelector('span').textContent = pending ? 'Running…' : 'Run test';
   };
   const fillMessage = value => {
@@ -1134,6 +1164,7 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
     configure.hidden = target.kind === 'deployment';
     if (reset) {
       selectedRun = undefined;
+      showLatest = false;
       requestTrace = undefined;
       message.value = '';
     }
@@ -1157,6 +1188,14 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
     });
   });
 
+  newTest.addEventListener('click', () => {
+    showLatest = false;
+    selectedRun = undefined;
+    setNotice();
+    draw();
+    message.focus();
+  });
+
   function recentRuns() {
     const target = current();
     const saved = traces.filter(trace => trace.target_id === target.id ||
@@ -1168,7 +1207,8 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
 
   function draw() {
     const runs = recentRuns();
-    if (!selectedRun) selectedRun = runs[0];
+    if (!selectedRun && showLatest) selectedRun = runs[0];
+    newTest.hidden = !selectedRun;
     runList.replaceChildren(...runs.map(run => {
       const row = element('button', undefined, 'studio-run');
       if (selectedRun?.id === run.id) row.setAttribute('aria-current', 'true');
@@ -1186,8 +1226,9 @@ function studioWorkspace(targets, selectedTarget, onAgentUpdate) {
     if (!runs.length) runList.append(element('p', 'No runs yet.', 'history-empty'));
 
     if (!selectedRun) {
-      session.replaceChildren(element('h2', 'No test results yet'),
-        element('p', 'Run a test to see the response and trace here.'));
+      session.replaceChildren(element('h2', 'Test results'),
+        element('p', runs.length ? 'Run a new test or select a previous run from history.' :
+          'The response and trace will appear here after your first test.'));
       if (current().starter) {
         const starter = iconButton('arrow', 'Use starter message', 'button');
         starter.type = 'button';
@@ -1403,9 +1444,9 @@ function agentRegistry() {
         setup.addEventListener('click', () => openAgentDetail(agent.id, 'integration'));
         actions.append(setup);
       } else {
-        const studio = iconButton('studio', 'Open Studio', 'button');
+        const studio = iconButton('studio', 'Test in Studio', 'button');
         studio.setAttribute('aria-label', 'Open ' + agent.name + ' in Studio');
-        studio.addEventListener('click', () => openAgentDetail(agent.id, 'studio'));
+        studio.addEventListener('click', () => loadModule('studio', agent.id));
         actions.append(studio);
       }
       const modelName = external ? 'Runs externally' : agent.provider ? recordName(agent.provider) : 'Workspace default';
@@ -1477,24 +1518,18 @@ async function loadModule(module, selectedTarget) {
     else button.removeAttribute('aria-current');
   });
   try {
-    if (module === 'feedback') await refresh();
-    if ((module === 'experiments' || (module === 'console-agents' && selectedTarget?.section === 'evaluations')) && accountStatus?.user) {
-      const nextKeys = await keyRequest();
-      if (!currentRequest()) return;
-      apiKeys = nextKeys;
-    }
-    if (['billing','models','agents','agent','studio'].includes(module)) {
-      const nextBilling = await billingRequest();
-      const nextKeys = module === 'billing' ? await keyRequest() : null;
-      if (!currentRequest()) return;
-      billing = nextBilling;
-      if (nextKeys) apiKeys = nextKeys;
-    }
-    if (module !== 'billing') {
-      const next = await platformRequest();
-      if (!currentRequest()) return;
-      records = next;
-    }
+    const needsKeys = module === 'billing' || ((module === 'experiments' ||
+      (module === 'console-agents' && selectedTarget?.section === 'evaluations')) && accountStatus?.user);
+    const [nextRecords, nextBilling, nextKeys] = await Promise.all([
+      module === 'billing' ? null : platformRequest(),
+      ['billing', 'models'].includes(module) ? billingRequest() : null,
+      needsKeys ? keyRequest() : null,
+      module === 'feedback' ? refresh() : null
+    ]);
+    if (!currentRequest()) return;
+    if (nextRecords) records = nextRecords;
+    if (['billing', 'models'].includes(module)) billing = nextBilling;
+    if (nextKeys) apiKeys = nextKeys;
     renderModule(module, selectedTarget);
   } catch (error) {
     if (currentRequest()) platformContent.replaceChildren(element('p', error.message));
