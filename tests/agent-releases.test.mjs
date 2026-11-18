@@ -299,6 +299,14 @@ test('published Agent configuration is isolated by workspace and environment and
   ]);
   assert.equal(gateway.diagnostics.length, 9);
   await gateway.ctx.storage.put('wecom-bot', bot);
+  const discovery = await create('wecom-topic-discover', {agent:agent.id, marker:'DISCOVER-42'});
+  const callsBeforeDiscovery = modelCalls.length;
+  await gateway.onMessage(gateway.socket, bot, JSON.stringify({cmd:'aibot_msg_callback',
+    headers:{req_id:'discovery-request'}, body:{msgid:'discovery-message', msgtype:'text',
+      text:{content:'@Bot DISCOVER-42'}, compat_info:{source:'channel', channel:{topic_id:'fixture-topic'}}}}));
+  const discovered = (await request('/api/platform/wecom-status')).data.topicDiscovery;
+  assert.deepEqual(discovered, {id:discovery.id, state:'found', topicId:'fixture-topic'});
+  assert.equal(modelCalls.length, callsBeforeDiscovery);
   const socket = {send(raw) {
     const request = JSON.parse(raw);
     assert.equal(request.cmd, 'aibot_topic_get_post_list');

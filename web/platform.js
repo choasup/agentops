@@ -305,6 +305,84 @@ function connectionIdentity(provider) {
   return identity;
 }
 
+function openWeComChannelConnection(provider) {
+  const marker = 'AD-' + crypto.randomUUID().slice(0, 8).toUpperCase();
+  const status = element('p', 'Checking the connected WeCom bot…');
+  status.setAttribute('role', 'status');
+  const topic = field('topic_id', 'Channel topic ID');
+  const input = topic.querySelector('input');
+  const fallback = element('details');
+  fallback.append(element('summary', 'Enter a topic ID manually'), topic);
+  const instructions = element('div');
+  instructions.hidden = true;
+  instructions.append(element('p', 'In the channel you want to connect, @mention your bot and send this code.'),
+    element('code', marker));
+  const copy = element('button', 'Copy code', 'button quiet');
+  copy.type = 'button';
+  copy.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(marker);
+      copy.textContent = 'Copied';
+    } catch {
+      status.textContent = 'Copy the code shown above.';
+    }
+  });
+  instructions.append(copy);
+  const form = formPanel('Channel access', [status, instructions, field('name', 'Channel display name'), fallback,
+    element('p', 'Use in signed-in Studio. Up to five recent post excerpts are sent to Hosted DeepSeek and included in the Trace.')
+  ], 'Verify and connect', async data => {
+    await platformRequest('/mcp-connect', {...data, provider:provider.id});
+    byId('modal').close();
+    await loadModule('connections');
+  });
+  const submit = form.querySelector('button[type="submit"]');
+  const updateButton = () => {submit.disabled = !input.value.trim();};
+  input.addEventListener('input', updateButton);
+  updateButton();
+  openModal('Connect WeCom channel', [form]);
+
+  const active = () => form.isConnected && byId('modal').open;
+  async function waitForTopic() {
+    try {
+      const gateway = await platformRequest('/wecom-status');
+      if (!active()) return;
+      if (!gateway.agent || gateway.status !== 'connected') {
+        status.textContent = 'Connect your WeCom bot from the Agent’s Publish page, then reopen this setup.';
+        return;
+      }
+      const discovery = await platformRequest('/wecom-topic-discover', {agent:gateway.agent, marker});
+      if (!active()) return;
+      if (discovery.state !== 'waiting') throw new Error('The WeCom bot disconnected. Reopen setup to retry.');
+      status.textContent = 'Waiting for your @mention in WeCom.';
+      instructions.hidden = false;
+      async function poll() {
+        if (!active()) return;
+        try {
+          const {topicDiscovery} = await platformRequest('/wecom-status');
+          if (!active()) return;
+          if (topicDiscovery?.id !== discovery.id) {
+            status.textContent = 'This connection code expired or was replaced. Reopen setup to get a new code.';
+          } else if (topicDiscovery.state === 'found') {
+            if (!input.value.trim()) input.value = topicDiscovery.topicId;
+            updateButton();
+            status.textContent = 'Channel found. Enter a display name and verify read access.';
+          } else if (topicDiscovery.state === 'missing') {
+            status.textContent = 'WeCom delivered the @mention without a channel ID. Reopen setup to retry in the channel.';
+          } else {
+            setTimeout(poll, 2500);
+          }
+        } catch (error) {
+          if (active()) status.textContent = error.message;
+        }
+      }
+      setTimeout(poll, 1000);
+    } catch (error) {
+      if (active()) status.textContent = error.message;
+    }
+  }
+  waitForTopic();
+}
+
 function openConnectionReview(provider, disconnect = false) {
   const connection = activeConnection(provider);
   const connected = Boolean(connection);
@@ -316,9 +394,7 @@ function openConnectionReview(provider, disconnect = false) {
     return;
   }
   if (disconnect) details.push(element('p', 'Agents using this connection will need a different tool or a new connection.'));
-  if (provider.id === 'wecom-channel' && !disconnect) details.push(
-    field('name', 'Channel display name'), field('topic_id', 'Channel topic ID'),
-    element('p', 'Use in signed-in Studio. Up to five recent post excerpts are sent to Hosted DeepSeek and included in the Trace.'));
+  if (provider.id === 'wecom-channel' && !disconnect) return openWeComChannelConnection(provider);
   const form = formPanel(disconnect ? 'Review disconnection' : 'Review access', details,
     disconnect ? 'Disconnect' : 'Verify and connect', async data => {
       if (disconnect) await platformRequest('/mcp-disconnect', {connection:connection.id});

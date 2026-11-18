@@ -24,7 +24,7 @@ export class WeComGateway {
       status:this.status, detail:this.detail, lastTrace:await this.ctx.storage.get('wecom-trace'),
       delivery:await this.ctx.storage.get('wecom-delivery'), diagnostics:this.diagnostics,
       topicDiscovery:this.topicDiscovery?.expires > Date.now() ? {state:this.topicDiscovery.state,
-        topicId:this.topicDiscovery.topicId} : undefined} :
+        topicId:this.topicDiscovery.topicId, id:this.topicDiscovery.id} : undefined} :
       {status:'disconnected'};
   }
 
@@ -133,8 +133,9 @@ export class WeComGateway {
   async discoverTopic(agent, marker) {
     const config = await this.ctx.storage.get(configKey);
     if (config?.agent !== agent || !this.socket || this.status !== 'connected') return {state:'disconnected'};
-    this.topicDiscovery = {marker, expires:Date.now() + 300_000, state:'waiting'};
-    return {state:'waiting'};
+    const id = crypto.randomUUID();
+    this.topicDiscovery = {id, marker, expires:Date.now() + 300_000, state:'waiting'};
+    return {state:'waiting', id};
   }
 
   inspectTopic(body) {
@@ -150,6 +151,7 @@ export class WeComGateway {
       discovery.state = 'missing';
     }
     delete discovery.marker;
+    return true;
   }
 
   async readTopicPosts(topicId, expectedBotId) {
@@ -234,10 +236,10 @@ export class WeComGateway {
     const key = frame.body?.msgid ?? request;
     if (typeof text !== 'string' || !text.trim()) return this.diagnostic(event, 'no_supported_text');
     if (this.seen.has(key)) return this.diagnostic(event, 'duplicate');
-    this.diagnostic(event, 'accepted');
-    this.inspectTopic(frame.body);
     this.seen.set(key, true);
     if (this.seen.size > 2048) this.seen.delete(this.seen.keys().next().value);
+    if (this.inspectTopic(frame.body)) return this.diagnostic('topic_discovery', this.topicDiscovery.state);
+    this.diagnostic(event, 'accepted');
     const id = crypto.randomUUID();
     this.latestMessage = key;
     const acknowledgement = this.reply(socket, request, id, '正在处理，请稍候…', false);
