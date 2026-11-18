@@ -1012,7 +1012,38 @@ function openHostedWeCom(agentId, environments, onStatus) {
   const diagnostics = element('details');
   const events = element('pre', 'No gateway events recorded yet.');
   diagnostics.hidden = true;
-  diagnostics.append(element('summary', 'Gateway diagnostics'), events);
+  const probeResult = element('p');
+  probeResult.setAttribute('role', 'status');
+  const topicField = field('topic_id', 'Channel topic ID');
+  const topicInput = topicField.querySelector('input');
+  const discoveryStatus = element('p');
+  discoveryStatus.setAttribute('role', 'status');
+  const discovery = formPanel('Find channel topic ID', [
+    field('marker', 'Mention test marker')
+  ], 'Listen for test mention', async data => {
+    const result = await platformRequest('/wecom-topic-discover', {...data, agent:agentId});
+    if (result.state !== 'waiting') throw new Error('The bot is not connected to this Agent.');
+    discoveryStatus.textContent = 'Mention the bot in the target channel and include the test marker.';
+  });
+  const probe = formPanel('Check channel read access', [
+    element('p', 'Checks a test marker in up to five posts from the last 15 minutes. Channel content is neither displayed nor saved.'),
+    topicField,
+    field('marker', 'Test marker')
+  ], 'Check channel', async data => {
+    probeResult.textContent = 'Checking channel…';
+    try {
+      const result = await platformRequest('/wecom-topic-probe', {...data, agent:agentId});
+      const messages = {matched:'Test post found.', disconnected:'The bot is not connected to this Agent.',
+        no_response:'WeCom did not acknowledge the request.', invalid_response:'WeCom returned an unexpected response.',
+        rejected:'WeCom rejected the request (code ' + result.code + ').',
+        not_matched:'Read access confirmed. No marker in ' + result.checked + ' recent posts.' +
+          (result.has_more ? ' More posts are available.' : '')};
+      probeResult.textContent = messages[result.state] ?? 'Unknown response';
+    } catch (error) {
+      probeResult.textContent = error.message;
+    }
+  });
+  diagnostics.append(element('summary', 'Gateway diagnostics'), events, discovery, discoveryStatus, probe, probeResult);
   heading.append(element('p', 'Cloudflare hosts this connection. Replies use the selected release and the workspace balance.'), status, current, diagnostics);
   async function update(data) {
     try {
@@ -1022,6 +1053,12 @@ function openHostedWeCom(agentId, environments, onStatus) {
       events.textContent = result.agent === agentId && result.diagnostics?.length
         ? result.diagnostics.map(({event, result}) => event + ' · ' + result).join('\n')
         : 'No gateway events recorded yet.';
+      if (result.agent === agentId && result.topicDiscovery?.state === 'found') {
+        discoveryStatus.textContent = 'Channel topic ID found.';
+        if (!topicInput.value) topicInput.value = result.topicDiscovery.topicId;
+      } else if (result.agent === agentId && result.topicDiscovery?.state === 'missing') {
+        discoveryStatus.textContent = 'The test mention arrived without a channel topic ID.';
+      }
       onStatus?.(result);
       disconnect.hidden = !result.agent;
     } catch (error) {status.textContent = error.message;}

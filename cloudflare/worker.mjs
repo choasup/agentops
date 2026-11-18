@@ -439,6 +439,18 @@ export class Workspace extends DurableObject {
       if (!record) throw new InputError(kind + ' was not found');
       return record;
     };
+    if (action === 'wecom-topic-probe' || action === 'wecom-topic-discover') {
+      if (!studioSession) throw new BillingError('Sign in to check a WeCom channel', 403);
+      const agent = find('agent', 'agent');
+      const marker = requiredText(data, 'marker');
+      if (!/^[A-Za-z0-9_-]{8,64}$/.test(marker)) throw new InputError('Enter an 8–64 character test marker');
+      if (action === 'wecom-topic-discover') return this.wecom.discoverTopic(agent.id, marker);
+      const topicId = requiredText(data, 'topic_id');
+      if (new TextEncoder().encode(topicId).length > 128) {
+        throw new InputError('Use a topic ID of up to 128 bytes');
+      }
+      return this.wecom.probeTopic(agent.id, topicId, marker);
+    }
     if (action === 'wecom-connect' || action === 'wecom-disconnect') {
       if (!studioSession) throw new BillingError('Sign in to manage WeCom', 403);
       if (action === 'wecom-disconnect') return this.wecom.configure(null);

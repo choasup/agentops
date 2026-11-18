@@ -22,7 +22,9 @@ export class WeComGateway {
     const config = await this.ctx.storage.get(configKey);
     return config ? {agent:config.agent, environment:config.environment,
       status:this.status, detail:this.detail, lastTrace:await this.ctx.storage.get('wecom-trace'),
-      delivery:await this.ctx.storage.get('wecom-delivery'), diagnostics:this.diagnostics} :
+      delivery:await this.ctx.storage.get('wecom-delivery'), diagnostics:this.diagnostics,
+      topicDiscovery:this.topicDiscovery?.expires > Date.now() ? {state:this.topicDiscovery.state,
+        topicId:this.topicDiscovery.topicId} : undefined} :
       {status:'disconnected'};
   }
 
@@ -32,6 +34,7 @@ export class WeComGateway {
     this.detail = undefined;
     this.seen.clear();
     this.diagnostics.length = 0;
+    this.topicDiscovery = undefined;
     await this.ctx.storage.delete(['wecom-trace','wecom-delivery']);
     if (config) {
       await this.ctx.storage.put(configKey, config);
@@ -98,28 +101,83 @@ export class WeComGateway {
     }
   }
 
-  reply(socket, request, streamId, content, finish) {
+  request(socket, command, requestId, body) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pendingReplies.delete(request);
-        reject(new Error('No reply acknowledgement from WeCom'));
+        this.pendingReplies.delete(requestId);
+        reject(new Error('No acknowledgement from WeCom'));
       }, 5000);
-      this.pendingReplies.set(request, {
+      this.pendingReplies.set(requestId, {
         socket,
         finish(frame) {
           clearTimeout(timer);
-          if (frame.errcode === 0) resolve();
-          else reject(new Error('WeCom rejected the reply (' + frame.errcode + ')'));
+          resolve(frame);
         }
       });
       try {
-        this.send(socket, 'aibot_respond_msg', request, {msgtype:'stream',stream:{id:streamId,content,finish}});
+        this.send(socket, command, requestId, body);
       } catch (error) {
-        this.pendingReplies.delete(request);
+        this.pendingReplies.delete(requestId);
         clearTimeout(timer);
         reject(error);
       }
     });
+  }
+
+  async reply(socket, request, streamId, content, finish) {
+    const frame = await this.request(socket, 'aibot_respond_msg', request,
+      {msgtype:'stream', stream:{id:streamId,content,finish}});
+    if (frame.errcode !== 0) throw new Error('WeCom rejected the reply (' + frame.errcode + ')');
+  }
+
+  async discoverTopic(agent, marker) {
+    const config = await this.ctx.storage.get(configKey);
+    if (config?.agent !== agent || !this.socket || this.status !== 'connected') return {state:'disconnected'};
+    this.topicDiscovery = {marker, expires:Date.now() + 300_000, state:'waiting'};
+    return {state:'waiting'};
+  }
+
+  inspectTopic(body) {
+    const discovery = this.topicDiscovery;
+    if (discovery?.state !== 'waiting' || discovery.expires <= Date.now() ||
+        typeof body?.text?.content !== 'string' || !body.text.content.includes(discovery.marker)) return;
+    const info = body.compat_info;
+    const id = info?.source === 'channel' && (info.channel?.topic_id ?? info.topic_id ?? body.topic_id);
+    if (typeof id === 'string' && id && new TextEncoder().encode(id).length <= 128) {
+      discovery.topicId = id;
+      discovery.state = 'found';
+    } else {
+      discovery.state = 'missing';
+    }
+    delete discovery.marker;
+  }
+
+  async probeTopic(agent, topicId, marker) {
+    const config = await this.ctx.storage.get(configKey);
+    const socket = this.socket;
+    if (config?.agent !== agent || !socket || this.status !== 'connected') return {state:'disconnected'};
+    const end = Math.floor(Date.now() / 1000);
+    let frame;
+    try {
+      frame = await this.request(socket, 'aibot_topic_get_post_list', 'topic_posts_' + crypto.randomUUID(),
+        {topic_id:topicId, type:1, begin_time:end - 900, end_time:end, sort_type:1, limit:5});
+    } catch {
+      this.diagnostic('topic_posts', 'no_response');
+      return {state:'no_response'};
+    }
+    if (frame.errcode !== 0) {
+      this.diagnostic('topic_posts', 'rejected');
+      return {state:'rejected', code:frame.errcode};
+    }
+    const posts = frame.body?.post_list;
+    if (!Array.isArray(posts)) {
+      this.diagnostic('topic_posts', 'invalid_response');
+      return {state:'invalid_response'};
+    }
+    const found = posts.some(post => !post?.is_recalled && typeof post?.content === 'string' &&
+      post.content.includes(marker));
+    this.diagnostic('topic_posts', found ? 'matched' : 'not_matched');
+    return {state:found ? 'matched' : 'not_matched', checked:posts.length, has_more:Boolean(frame.body.has_more)};
   }
 
   async updateDelivery(socket, key, state, detail) {
@@ -167,6 +225,7 @@ export class WeComGateway {
     if (typeof text !== 'string' || !text.trim()) return this.diagnostic(event, 'no_supported_text');
     if (this.seen.has(key)) return this.diagnostic(event, 'duplicate');
     this.diagnostic(event, 'accepted');
+    this.inspectTopic(frame.body);
     this.seen.set(key, true);
     if (this.seen.size > 2048) this.seen.delete(this.seen.keys().next().value);
     const id = crypto.randomUUID();

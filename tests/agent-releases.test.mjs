@@ -298,4 +298,18 @@ test('published Agent configuration is isolated by workspace and environment and
     {event:'message:image', result:'no_supported_text'}
   ]);
   assert.equal(gateway.diagnostics.length, 9);
+  await gateway.ctx.storage.put('wecom-bot', bot);
+  const socket = {send(raw) {
+    const request = JSON.parse(raw);
+    assert.equal(request.cmd, 'aibot_topic_get_post_list');
+    assert.equal(request.body.topic_id, 'fixture-topic');
+    assert.equal(request.body.limit, 5);
+    assert.equal(request.body.end_time - request.body.begin_time, 900);
+    queueMicrotask(() => gateway.onMessage(socket, bot, JSON.stringify({headers:request.headers,
+      errcode:0, body:{post_list:[{content:'test-MARKER-42', inline_file_list:[{cookie_value:'private fixture'}]}]}})));
+  }};
+  gateway.socket = socket;
+  const access = await create('wecom-topic-probe', {agent:agent.id, topic_id:'fixture-topic', marker:'MARKER-42'});
+  assert.deepEqual(access, {state:'matched', checked:1, has_more:false});
+  assert.deepEqual(gateway.diagnostics.at(-1), {event:'topic_posts', result:'matched'});
 });
