@@ -203,6 +203,114 @@ async function create(module, data) {
   await loadModule(module === 'examples' ? 'datasets' : module);
 }
 
+const connectionCatalogue = [
+  {id:'cloudflare-docs', brand:'Cloudflare', logo:'cloudflare.png', name:'Cloudflare Documentation',
+    access:'Read-only MCP', description:'Search public Cloudflare developer documentation.',
+    source:'https://docs.mcp.cloudflare.com/mcp'},
+  {id:'github-agentops', brand:'GitHub', logo:'github.svg', name:'GitHub · agentops',
+    access:'Read-only connector', description:'Read the public README in choasup/agentops on main.',
+    source:'https://github.com/choasup/agentops'}
+];
+
+function activeConnection(provider) {
+  return ofKind('mcp_connection').find(item => !item.revoked &&
+    (item.provider ?? 'cloudflare-docs') === provider.id);
+}
+
+function connectionIdentity(provider) {
+  const identity = element('div', undefined, 'connection-identity');
+  const logo = element('img');
+  logo.src = 'connectors/' + provider.logo;
+  logo.alt = '';
+  identity.append(logo, element('span', provider.brand));
+  return identity;
+}
+
+function openConnectionReview(provider, disconnect = false) {
+  const connection = activeConnection(provider);
+  const connected = Boolean(connection);
+  const name = disconnect ? 'Disconnect ' : connected ? '' : 'Connect ';
+  const details = [connectionIdentity(provider), element('p', provider.description),
+    element('code', provider.source), element('p', provider.access)];
+  if (connected && !disconnect) {
+    openModal(provider.name, [...details, element('p', 'Already connected to this workspace.')]);
+    return;
+  }
+  if (disconnect) details.push(element('p', 'Agents using this connection will need a different tool or a new connection.'));
+  const form = formPanel(disconnect ? 'Review disconnection' : 'Review access', details,
+    disconnect ? 'Disconnect' : 'Verify and connect', async () => {
+      if (disconnect) await platformRequest('/mcp-disconnect', {connection:connection.id});
+      else await platformRequest('/mcp-connect', {provider:provider.id});
+      byId('modal').close();
+      await loadModule('connections');
+    });
+  openModal(name + provider.name, [form]);
+}
+
+function connectionCard(provider) {
+  const connection = activeConnection(provider);
+  const card = element('section', undefined, 'panel module-panel connection-card');
+  const state = element('span', connection ? 'Connected' : 'Available', connection ? 'pill success' : 'pill');
+  const head = element('div', undefined, 'connection-card-head');
+  head.append(connectionIdentity(provider), state);
+  const action = iconButton(connection ? 'settings' : 'plus', connection ? 'Manage' : 'Connect', 'button');
+  action.setAttribute('aria-label', (connection ? 'Manage ' : 'Connect ') + provider.name);
+  action.addEventListener('click', () => {
+    if (!connection) return openConnectionReview(provider);
+    const disconnect = iconButton('close', 'Disconnect', 'button');
+    disconnect.addEventListener('click', () => openConnectionReview(provider, true));
+    openModal(provider.name, [connectionIdentity(provider), element('p', provider.description),
+      element('p', provider.access), disconnect]);
+  });
+  const footer = element('div', undefined, 'connection-card-head');
+  footer.append(element('span', provider.access, 'pill'), action);
+  card.append(head, element('h2', provider.name), element('p', provider.description), footer);
+  return card;
+}
+
+function openConnectionImport() {
+  const input = field('command', 'Install command or URL', 'textarea');
+  input.querySelector('textarea').placeholder = 'https://docs.mcp.cloudflare.com/mcp';
+  const examples = element('details');
+  examples.append(element('summary', 'Supported install commands'),
+    element('code', 'codex mcp add cloudflare-docs --url ' + connectionCatalogue[0].source),
+    element('code', connectionCatalogue[1].source));
+  const form = formPanel('Find a connector', [input, examples], 'Review connection', data => {
+    const entered = data.command.trim();
+    const provider = connectionCatalogue.find(item => [item.source, item.id].includes(entered)) ??
+      (/^(?:claude mcp add --transport http|codex mcp add) [\w-]+ (?:--url )?https:\/\/docs\.mcp\.cloudflare\.com\/mcp$/.test(entered)
+        ? connectionCatalogue[0] : undefined);
+    if (!provider) throw new Error('No matching connector. Choose a supported command or URL.');
+    openConnectionReview(provider);
+  });
+  form.classList.add('connection-install');
+  openModal('Add a connection', [form]);
+}
+
+function openSkillImport() {
+  const picker = field('archive', 'Skill ZIP', 'file');
+  const input = picker.querySelector('input');
+  input.accept = '.zip,application/zip';
+  const form = formPanel('Select a package', [picker,
+    element('p', 'Choose a ZIP containing one SKILL.md. Agent Deck imports the instructions from that file.')],
+  'Preview Skill', async () => {
+    const {importSkillZip} = await import('./skill-zip.mjs');
+    const skill = await importSkillZip(input.files[0]);
+    const preview = formPanel(skill.name, [
+      element('p', 'Attach this Skill in Studio → Configure when using Hosted DeepSeek. Bundled scripts and supporting files are skipped.'),
+      element('pre', skill.instructions, 'skill-preview')
+    ], 'Import Skill', async () => {
+      await platformRequest('/skills', skill);
+      byId('modal').close();
+      await loadModule('skills');
+    });
+    const back = iconButton('arrow', 'Choose another ZIP', 'button quiet');
+    back.addEventListener('click', openSkillImport);
+    openModal('Review Skill', [preview, back]);
+  });
+  openModal('Import Skill', [form]);
+}
+
 function renderModule(module, selectedTarget) {
   refreshWorkspaceView = undefined;
   const [title, description] = modules[module];
@@ -217,60 +325,26 @@ function renderModule(module, selectedTarget) {
   const inputField = () => field('input', 'Input JSON', 'textarea');
 
   if (module === 'skills') {
-    const skillName = field('name', 'Skill name');
-    const skillInstructions = field('instructions', 'Instructions', 'textarea');
-    skillName.querySelector('input').maxLength = 80;
-    skillInstructions.querySelector('textarea').maxLength = 2000;
-    const template = iconButton('prompt', 'Use repository quickstart template', 'button quiet');
-    template.type = 'button';
-    template.addEventListener('click', () => {
-      skillName.querySelector('input').value = '仓库快速上手';
-      skillInstructions.querySelector('textarea').value =
-        '基于 GitHub 只读工具返回的 README，用中文按「项目用途」「快速启动」「阅读入口」三项提供上手指南。保留 README 里的启动命令和链接，缺失信息请明确说明。';
-    });
-    panels.push(formPanel('Create a Skill', [
-      element('p', 'Requires the GitHub · agentops README connection. Assign the connection and Skill in each Agent’s Configuration.'),
-      template, skillName, skillInstructions
-    ], 'Save Skill', data => create('skills', data)));
-    panels.push(listPanel('Saved Skills', ofKind('skill').map(skill => expandable(skill.name, {
-      instructions:skill.instructions, required_connection:'GitHub · agentops README'
-    }))));
+    const upload = iconButton('plus', 'Import ZIP', 'button primary');
+    upload.addEventListener('click', openSkillImport);
+    heading.append(upload);
+    const skills = ofKind('skill');
+    const library = listPanel('Installed Skills', skills.length ? skills.map(skill => {
+      const detail = element('details', undefined, 'skill-library-item');
+      detail.append(element('summary', skill.name),
+        element('p', skill.requires ? 'Required connection: ' + connectionCatalogue.find(item => item.id === skill.requires)?.name : 'Assign in Studio → Configure.'),
+        element('pre', skill.instructions, 'skill-preview'));
+      return detail;
+    }) : [element('p', 'Import a ZIP containing SKILL.md to add your first Skill.')]);
+    library.classList.add('wide');
+    panels.push(library);
   }
 
   if (module === 'connections') {
-    const catalogue = [
-      {id:'cloudflare-docs', name:'Cloudflare Documentation', access:'Read-only MCP',
-        description:'Search public Cloudflare developer documentation.'},
-      {id:'github-agentops', name:'GitHub · agentops', access:'Read-only connector',
-        description:'Read only the public README from choasup/agentops on main. No GitHub account authorization is needed.'}
-    ];
-    for (const provider of catalogue) {
-      const connection = ofKind('mcp_connection').find(item => !item.revoked &&
-        (item.provider ?? 'cloudflare-docs') === provider.id);
-      const card = listPanel(provider.name, [
-        element('span', provider.access, 'pill'),
-        element('p', provider.description),
-        element('span', connection ? 'Connected' : 'Available', connection ? 'pill success' : 'pill')
-      ]);
-      card.classList.add('connection-card');
-      const action = iconButton(connection ? 'close' : 'plus', connection ? 'Disconnect' : 'Connect');
-      action.setAttribute('aria-label', (connection ? 'Disconnect ' : 'Connect ') + provider.name);
-      const status = element('p');
-      status.setAttribute('role', 'status');
-      action.addEventListener('click', async () => {
-        action.disabled = true;
-        try {
-          if (connection) await platformRequest('/mcp-disconnect', {connection:connection.id});
-          else await platformRequest('/mcp-connect', {provider:provider.id});
-          await loadModule('connections');
-        } catch (error) {
-          status.textContent = error.message;
-          action.disabled = false;
-        }
-      });
-      card.append(action, status);
-      panels.push(card);
-    }
+    const install = iconButton('terminal', 'Paste install command', 'button');
+    install.addEventListener('click', openConnectionImport);
+    heading.append(install);
+    panels.push(...connectionCatalogue.map(connectionCard));
   }
 
   if (module === 'models') {
@@ -682,19 +756,11 @@ function agentFields(data, models) {
     toolInput.options[0].textContent = 'No tools';
     toolInput.required = false;
     toolInput.value = data.mcp_connection ?? '';
-    const skills = ofKind('skill');
-    const skill = field('skill', 'Installed Skill', skills.map(item => [item.id, item.name]));
-    const skillInput = skill.querySelector('select');
-    skillInput.options[0].textContent = 'No Skill';
-    skillInput.required = false;
-    skillInput.value = data.skill ?? '';
     const note = element('small');
     const showTool = () => {
       tool.hidden = modelInput.value !== hostedProvider;
       if (tool.hidden) toolInput.value = '';
       const connection = connections.find(item => item.id === toolInput.value);
-      skill.hidden = !skills.length || connection?.provider !== 'github-agentops';
-      if (skill.hidden) skillInput.value = '';
       note.hidden = !connection;
       if (connection) note.textContent = connection.scope ? 'Each run reads ' + connection.scope + '.' :
         'Each run searches public Cloudflare docs using the message you send.';
@@ -702,7 +768,30 @@ function agentFields(data, models) {
     modelInput.addEventListener('change', showTool);
     toolInput.addEventListener('change', showTool);
     showTool();
-    root.append(tool, note, skill);
+    root.append(tool, note);
+  }
+  const skills = ofKind('skill');
+  if (skills.length) {
+    const skill = field('skill', 'Installed Skill', skills.map(item => [item.id, item.name]));
+    const skillInput = skill.querySelector('select');
+    skillInput.options[0].textContent = 'No Skill';
+    skillInput.required = false;
+    skillInput.value = data.skill ?? '';
+    const toolInput = root.querySelector('[name=mcp_connection]');
+    const showSkills = () => {
+      const connection = connections.find(item => item.id === toolInput?.value && !item.revoked);
+      const hosted = modelInput.value === hostedProvider;
+      skill.hidden = !hosted;
+      for (const option of Array.from(skillInput.options).slice(1)) {
+        const requires = skills.find(item => item.id === option.value)?.requires;
+        option.disabled = Boolean(requires && requires !== (connection && (connection.provider ?? 'cloudflare-docs')));
+      }
+      if (!hosted || skillInput.selectedOptions[0]?.disabled) skillInput.value = '';
+    };
+    modelInput.addEventListener('change', showSkills);
+    toolInput?.addEventListener('change', showSkills);
+    showSkills();
+    root.append(skill);
   }
   return root;
 }

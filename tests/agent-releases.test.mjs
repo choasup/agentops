@@ -212,6 +212,12 @@ test('published Agent configuration is isolated by workspace and environment and
   assert.equal(githubRun.data.steps[0].input.repository,'choasup/agentops');
   assert.match(githubRun.data.steps[0].output.content,/# Agent Deck/);
   assert.match(modelCalls.at(-1).messages[1].content,/An Agent workspace/);
+  const imported = await create('skills', {name:'Summarizer', instructions:'Summarize in bullets.', requires:null});
+  const importAgent = await create('agents', {...profile,instructions:'Summarize',skill:imported.id});
+  const importRun = await action('runs', {target_kind:'agent',target:importAgent.id,input:'Summarize this text'}, {token:key.token});
+  assert.equal(importRun.status,201);
+  assert.equal(importRun.data.steps[0].skill_id,imported.id);
+  assert.equal((await action('skills', {name:'Invalid dependency',instructions:'Test',requires:'unknown'})).status,400);
   const skill = await create('skills', {name:'Repository quickstart', instructions:'Summarize the startup steps.'});
   assert.equal((await action('agents', {...profile,instructions:'Test',skill:skill.id})).status,400);
   const skillAgent = await create('agents', {...profile,instructions:'Answer from sources',

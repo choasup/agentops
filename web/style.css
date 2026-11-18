@@ -589,5 +589,18 @@ dialog::backdrop {background: #111a3a70}
   .workspace-switch {margin:0 0 6px; max-width:320px}
 }
 
-.connection-card {display:grid; gap:9px; justify-items:start}
+.connection-card {display:grid; gap:10px; grid-template-rows:auto auto 1fr auto; align-self:stretch; padding:18px}
+.connection-card-head, .connection-identity {display:flex; align-items:center; flex-wrap:wrap; gap:9px}
+.connection-card-head {justify-content:space-between}
+.connection-identity {font-weight:680}
+.connection-identity img {display:block; height:24px; max-width:82px; object-fit:contain}
+.connection-identity img[src$="cloudflare.png"] {height:26px}
+.connection-identity img[src$="cloudflare.png"] + span {display:none}
+.connection-card > p {color:var(--muted)}
+.connection-card-head > .button {margin-inline-start:auto}
+.connection-install details code {display:block; margin-block:6px; overflow-wrap:anywhere}
+.skill-library-item {padding:8px 0}
+.skill-library-item + .skill-library-item {border-top:1px solid var(--border)}
+.skill-library-item > p {margin-top:8px; color:var(--muted)}
+.skill-preview {max-height:42dvh; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere}
 .connection-card [role="status"]:empty {display:none}

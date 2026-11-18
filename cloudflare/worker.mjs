@@ -267,11 +267,14 @@ export class Workspace extends DurableObject {
   resolveSkill(records, agent) {
     if (!agent.skill) return undefined;
     const skill = records.find(item => item.kind === 'skill' && item.id === agent.skill);
-    const connection = records.find(item => item.kind === 'mcp_connection' &&
-      item.id === agent.mcp_connection && !item.revoked);
-    if (!skill || agent.provider !== hostedProviderId || !connection ||
-        connectionProvider(connection) !== skill.requires || connection.tool !== githubConnection.tool) {
-      throw new InputError('This Skill requires an authorized GitHub · agentops README connection');
+    if (!skill || agent.provider !== hostedProviderId) throw new InputError('Choose an installed Skill for Hosted DeepSeek');
+    if (skill.requires) {
+      const connection = records.find(item => item.kind === 'mcp_connection' &&
+        item.id === agent.mcp_connection && !item.revoked);
+      const provider = readOnlyConnections.get(skill.requires);
+      if (!connection || !provider || connectionProvider(connection) !== skill.requires || connection.tool !== provider.details.tool) {
+        throw new InputError('This Skill requires an authorized ' + (provider?.details.name ?? 'read-only') + ' connection');
+      }
     }
     return skill;
   }
@@ -481,8 +484,10 @@ export class Workspace extends DurableObject {
     if (action === 'skills') {
       const name = requiredText(data, 'name');
       const instructions = requiredText(data, 'instructions');
-      if (name.length > 80 || instructions.length > 2000) throw new InputError('Use a name up to 80 characters and instructions up to 2000');
-      return this.save('skill', {name, instructions, requires:'github-agentops'});
+      const requires = data.requires === undefined ? 'github-agentops' : data.requires;
+      if (requires !== null && !readOnlyConnections.has(requires)) throw new InputError('Unknown required connection');
+      if (name.length > 80 || instructions.length > 16000) throw new InputError('Use a name up to 80 characters and instructions up to 16000');
+      return this.save('skill', {name, instructions, requires});
     }
     if (action === 'mcp-connect') {
       const provider = readOnlyConnections.get(data.provider);
