@@ -76,6 +76,7 @@ function allowedScope(path, method) {
   if (path === '/api/traces' && method === 'POST') return 'traces:write';
   if (path === '/api/platform/runs' && method === 'POST') return 'agents:run';
   if (path === '/api/agents' && method === 'GET') return 'agents:run';
+  if ((path === '/api/agents' && method === 'POST') || (path === '/api/models' && method === 'GET')) return 'agents:create';
   return null;
 }
 
@@ -305,7 +306,7 @@ export class Workspace extends DurableObject {
     const name = requiredText(data, 'name');
     if (name.length > 80) throw new InputError('Use a name of up to 80 characters');
     if (!Array.isArray(data.scopes) || !data.scopes.length ||
-        data.scopes.some(scope => !['traces:read','traces:write','agents:run','models:invoke'].includes(scope))) {
+        data.scopes.some(scope => !['traces:read','traces:write','agents:run','agents:create','models:invoke'].includes(scope))) {
       throw new InputError('Choose at least one valid scope');
     }
     if (!this.env.AGENTOPS_INGEST_TOKEN || !workspacePattern.test(workspace ?? '')) {
@@ -712,6 +713,11 @@ export class Workspace extends DurableObject {
         return json(keys.map(key => ({...key, scopes:JSON.parse(key.scopes)})));
       }
       if (pathname === '/api/billing') return json(this.billing.summary());
+      if (pathname === '/api/models') return json([
+        ...(this.env.DEEPSEEK_API_KEY ? [{id:hostedProviderId, name:'DeepSeek Flash · Hosted'}] : []),
+        ...this.rows('records').filter(record => record.kind === 'model').map(({id, name}) => ({id, name})),
+        ...(this.env.TRACE_STUDIO_MODEL ? [{id:'default', name:'Workspace default'}] : [])
+      ]);
       if (pathname === '/api/agents') return json(this.rows('records').filter(record => record.kind === 'agent').map(
         ({id, identifier, name, source}) => ({id, identifier, name, source})
       ));
@@ -753,6 +759,10 @@ export class Workspace extends DurableObject {
           return json({ok:true});
         }
         if (pathname === '/api/traces') return json(this.ingest(data), 201);
+        if (pathname === '/api/agents') {
+          const {name, source, provider, instructions, description, starter, max_tokens} = data;
+          return json(await this.action('agents', {name, source, provider, instructions, description, starter, max_tokens}), 201);
+        }
         if (pathname.startsWith('/api/platform/')) {
           if (keyId && pathname === '/api/platform/runs') {
             if (data.billing_key && data.billing_key !== keyId) return json({error:'Use the calling key for billing'}, 403);

@@ -52,7 +52,7 @@ npx wrangler secret put AGENTOPS_INGEST_TOKEN
 ## 在平台接入 LLM 并创建 Agent
 
 1. 打开 **Models**，填写连接名称、完整 Chat Completions URL、模型 ID 和 API Key（如供应商要求），保存后用 **Test connection** 试发一条消息。
-2. 打开 **All agents → Build in Studio**，选择已保存的模型并填写 Agent 名称和系统指令。
+2. 打开 **All agents → New agent**，选择已保存的模型并填写 Agent 名称和系统指令。
 3. 创建后在 **Studio** 输入消息，执行记录可在 **Traces** 查看。
 
 支持 OpenAI 兼容的 Chat Completions 接口。Cloudflare 部署要求 HTTPS。本机 Python 版本也支持回环地址上的 HTTP 模型服务。模型密钥由服务端保存，列表和测试接口不会返回密钥。既有 Agent 仍可使用部署环境中配置的默认模型。
@@ -79,6 +79,7 @@ Cloudflare Workers AI 测试连接使用独立的私有 Worker。新账号部署
 | --- | --- |
 | Read traces | `GET /api/traces` |
 | Send traces | `POST /api/traces` |
+| Create agents and list models | `POST /api/agents`、`GET /api/models` |
 | List and run agents | `GET /api/agents`、`POST /api/platform/runs` |
 | Call hosted models | `POST /v1/chat/completions`；调用托管 Studio Agent 还需要 List and run agents |
 
@@ -89,6 +90,20 @@ curl -H "Authorization: Bearer $AGENTOPS_API_KEY" \
   -d '{"target_kind":"agent","target":"<GET /api/agents 返回的 id>","input":"你好"}' \
   https://agentdeck.cloudmoro.com/api/platform/runs
 ```
+
+### Agent Deck CLI
+
+使用 Node.js 20+。在 **Billing → API Keys** 创建带 **Create agents and list models** 权限的 Key，并在终端设置环境变量 `AGENT_DECK_API_KEY`。如需列出已创建的 Agent，再勾选 **List and run agents**。
+
+```sh
+curl --fail --silent --show-error https://agentdeck.cloudmoro.com/agentdeck.mjs -o agentdeck.mjs
+node agentdeck.mjs models list
+node agentdeck.mjs agents create --name "Repository guide" --model hosted:deepseek \
+  --prompt "Explain this repository to new contributors."
+node agentdeck.mjs agents list
+```
+
+`--model` 使用模型列表中的 ID。可以用 `--prompt-file instructions.md` 读取本地文件，文件内容会作为 Agent 指令提交。用 `node agentdeck.mjs agents create --name "Existing agent" --external` 注册外部 Agent。创建结果输出为 JSON，Agent 会出现在同一工作区的 **Home → All agents**。
 
 ### DeepSeek 托管 API
 

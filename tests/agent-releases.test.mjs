@@ -109,6 +109,24 @@ test('published Agent configuration is isolated by workspace and environment and
   env.WORKSPACE.getByName('browser:' + workspace).billing.credit('test-credit:test-releases', 100);
   const key = (await request('/api/keys', {data:{name:'Agent runner', scopes:['agents:run','models:invoke']}})).data;
   const telemetryKey = (await request('/api/keys', {data:{name:'Telemetry only', scopes:['traces:write']}})).data;
+  const cliKey = (await request('/api/keys', {data:{name:'CLI', scopes:['agents:create']}})).data;
+  const cli = {token:cliKey.token};
+  const createPayload = {name:'CLI agent', provider:'hosted:deepseek', instructions:'Read and summarize.'};
+  assert.equal((await request('/api/agents', {data:createPayload, token:key.token})).status, 403);
+  assert.equal((await request('/api/models', {token:telemetryKey.token})).status, 403);
+  assert.equal((await request('/api/agents', cli)).status, 403);
+  assert.equal((await action('agents', createPayload, cli)).status, 403);
+  assert.deepEqual(await request('/api/models', cli),
+    {status:200, data:[{id:'hosted:deepseek', name:'DeepSeek Flash · Hosted'}]});
+  const fromCli = await request('/api/agents', {...cli, data:createPayload});
+  assert.equal(fromCli.status, 201);
+  assert.equal(fromCli.data.instructions, createPayload.instructions);
+  assert.ok((await request('/api/agents')).data.some(agent => agent.id === fromCli.data.id));
+  assert.ok(!(await request('/api/agents', {session:'other-session'})).data.some(agent => agent.id === fromCli.data.id));
+  const externalCli = await request('/api/agents', {...cli, data:{name:'CLI external', source:'external'}});
+  assert.equal(externalCli.status, 201);
+  assert.equal(externalCli.data.source, 'external');
+  assert.ok(externalCli.data.identifier);
   const profile = {name:'Support agent', provider:'hosted:deepseek'};
   const agent = await create('agents', {...profile, instructions:'Version one', max_tokens:80});
   const first = await create('agent-versions', {agent:agent.id,label:'v1'});

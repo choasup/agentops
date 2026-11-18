@@ -528,15 +528,7 @@ dialog::backdrop {background: #111a3a70}
 #modal:has(.agent-builder) {width:min(600px,calc(100% - 24px))}
 .agent-builder {display:grid; gap:8px}
 .agent-builder textarea {min-height:110px; font-size:14px}
-.agent-prompt-examples {display:flex; flex-wrap:wrap; gap:4px 6px}
-.agent-prompt-examples .button {min-height:32px; padding:4px 7px; font-size:12px; border-color:var(--border)}
-.agent-prompt-settings {padding:8px 0; border-block:1px solid var(--border)}
-.agent-prompt-settings summary {display:flex; align-items:center; justify-content:space-between; gap:8px; cursor:pointer}
-.agent-prompt-settings summary::before {content:"+"; color:var(--accent-dark)}
-.agent-prompt-settings[open] summary::before {content:"−"}
-.agent-prompt-settings summary small {margin-inline-start:auto; text-align:end; color:var(--muted)}
-.agent-prompt-settings > label, .agent-prompt-settings > .button {margin-top:10px}
-.agent-builder-external {justify-self:start}
+.agent-builder-actions {display:flex; flex-wrap:wrap; gap:8px}
 
 .external-integration, .integration-steps {display:grid; gap:12px}
 .integration-steps {padding-inline-start:22px; margin:0}
