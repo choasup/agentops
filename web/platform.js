@@ -80,13 +80,15 @@ function billingPanels() {
   entries.append(...billing.entries.map(entry => {
     const item = element('div', undefined, 'billing-entry');
     const key = apiKeys.find(key => key.id === entry.key_id);
+    const usage = Boolean(entry.model);
+    const label = usage ? (key?.name ?? (entry.key_id ? 'API key' : 'Studio test')) + ' · ' + entry.model :
+      entry.reference.startsWith('test-credit:') ? 'Test credit' : 'Top-up';
     item.append(
-      element('strong', key ? key.name + ' · ' + entry.model :
-        entry.reference.startsWith('test-credit:') ? 'Test credit' : 'Top-up'),
-      element('span', (entry.key_id ? '−' : '+') + billingMoney(Math.abs(entry.nanos))),
+      element('strong', label),
+      element('span', (usage ? '−' : '+') + billingMoney(Math.abs(entry.nanos))),
       element('small', timeLabel(entry.at))
     );
-    if (entry.key_id) item.append(element('small',
+    if (usage) item.append(element('small',
       number.format(entry.input_tokens) + ' input (' + number.format(entry.cached_tokens) +
       ' cached) · ' + number.format(entry.output_tokens) + ' output'), traceLink(entry.reference));
     return item;
@@ -130,7 +132,7 @@ async function platformRequest(path = '', data) {
     method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(data)
   });
   const value = await response.json();
-  if (!response.ok) throw new Error(value.error ?? 'Request failed');
+  if (!response.ok) throw Object.assign(new Error(value.error ?? 'Request failed'), {status:response.status});
   return value;
 }
 
@@ -861,15 +863,6 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
   const stage = element('div', undefined, 'studio-stage');
   const session = element('div', undefined, 'studio-stream');
   const form = element('form', undefined, 'studio-composer');
-  const availableKeys = apiKeys.filter(key => !key.revoked && key.scopes.includes('models:invoke'));
-  const billingField = field('billing_key', 'Billing key', availableKeys.map(key => [key.id, key.name]));
-  const billingInput = billingField.querySelector('select');
-  if (availableKeys.length === 1) billingInput.value = availableKeys[0].id;
-  const manageKeys = iconButton('key', 'Manage billing keys', 'button');
-  manageKeys.type = 'button';
-  manageKeys.addEventListener('click', () => loadModule('billing').then(() => {
-    if (!availableKeys.length) byId('billing-api-keys')?.scrollIntoView();
-  }));
   const message = element('textarea');
   message.rows = 2;
   message.required = true;
@@ -881,9 +874,12 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
   const notice = element('p', undefined, 'studio-run-notice');
   notice.setAttribute('role', 'status');
   const formFooter = element('div', undefined, 'composer-footer');
-  const billingActions = element('div', undefined, 'studio-billing-actions');
-  billingActions.append(billingField, manageKeys);
-  formFooter.append(billingActions, send);
+  const balanceHint = element('span', 'Uses workspace balance', 'studio-run-context');
+  const openBilling = iconButton('wallet', 'Open Billing', 'button quiet');
+  openBilling.type = 'button';
+  openBilling.hidden = true;
+  openBilling.addEventListener('click', () => loadModule('billing'));
+  formFooter.append(balanceHint, openBilling, send);
   form.append(messageLabel, message, hint, formFooter, notice);
   stage.append(form, session);
   split.append(stage, history);
@@ -893,23 +889,18 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
   let selectedRun;
   let requestTrace;
   const current = () => targets.find(target => target.id === targetInput.value);
-  const setNotice = (text = '', error = false) => {
+  const setNotice = (text = '', error = false, showBilling = false) => {
+    openBilling.hidden = !showBilling;
     notice.textContent = text;
     notice.classList.toggle('is-error', error);
   };
   const updateRunButton = () => {
-    const needsKey = current().provider === hostedProvider && !billingInput.value;
-    send.disabled = pending || needsKey || !message.value.trim();
+    send.disabled = pending || !message.value.trim();
     send.querySelector('span').textContent = pending ? 'Running…' : 'Run test';
-  };
-  const updateBillingNotice = () => {
-    const needsKey = current().provider === hostedProvider && !billingInput.value;
-    setNotice(needsKey ? (availableKeys.length ? 'Choose a billing key to run this test.' :
-      'Add an API key with hosted model access to run this test.') : '');
   };
   const fillMessage = value => {
     message.value = value;
-    if (!pending) updateBillingNotice();
+    if (!pending) setNotice();
     updateRunButton();
     message.focus();
   };
@@ -917,10 +908,7 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
     const target = current();
     lastStudioTarget = target.id;
     model.textContent = target.provider ? recordName(target.provider) : target.kind === 'deployment' ? 'Deployment' : 'Workspace default';
-    const hosted = target.provider === hostedProvider;
-    billingField.hidden = !hosted || !availableKeys.length;
-    billingInput.disabled = !hosted || !availableKeys.length;
-    manageKeys.hidden = !hosted || Boolean(availableKeys.length);
+    balanceHint.hidden = target.provider !== hostedProvider;
     const connection = ofKind('mcp_connection').find(item => item.id === target.mcp_connection);
     const skill = ofKind('skill').find(item => item.id === target.skill);
     hint.textContent = connection?.revoked ? 'This Agent’s tool is disconnected. Change it in Configuration.' :
@@ -935,7 +923,7 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
     }
     messageLabel.textContent = target.instructions ? 'Test message' : 'Input JSON';
     message.placeholder = target.instructions ? 'Send a test message…' : 'Enter JSON input…';
-    updateBillingNotice();
+    setNotice();
     updateRunButton();
     draw();
   };
@@ -1018,10 +1006,6 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
     if (notice.classList.contains('is-error')) setNotice();
     updateRunButton();
   });
-  billingInput.addEventListener('change', () => {
-    if (!pending) updateBillingNotice();
-    updateRunButton();
-  });
   message.addEventListener('keydown', event => {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !send.disabled) {
       event.preventDefault();
@@ -1046,14 +1030,13 @@ function studioWorkspace(targets, selectedTarget, scoped = false) {
     updateRunButton();
     const submitted = message.value;
     try {
-      const trace = await platformRequest('/runs', {target:target.id, target_kind:target.kind, input,
-        ...(target.provider === hostedProvider ? {billing_key:billingInput.value} : {})});
+      const trace = await platformRequest('/runs', {target:target.id, target_kind:target.kind, input});
       selectedRun = requestTrace = trace;
       if (message.value === submitted) message.value = '';
       setNotice(runStatus(trace) === 'error' ? 'Test failed. See the result below.' : 'Test complete.');
       refresh();
     } catch (error) {
-      setNotice(error.message, true);
+      setNotice(error.message, true, error.status === 402);
     } finally {
       pending = false;
       targetInput.disabled = false;
@@ -1275,7 +1258,7 @@ async function loadModule(module, selectedTarget) {
     }
     if (['billing','models','agents','agent','studio'].includes(module)) {
       const nextBilling = await billingRequest();
-      const nextKeys = module === 'billing' || ((module === 'studio' || (module === 'agent' && selectedTarget.section === 'studio')) && nextBilling) ? await keyRequest() : null;
+      const nextKeys = module === 'billing' ? await keyRequest() : null;
       if (!currentRequest()) return;
       billing = nextBilling;
       if (nextKeys) apiKeys = nextKeys;

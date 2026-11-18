@@ -179,6 +179,9 @@ export default {
     }
     const internal = new Request(request);
     internal.headers.set('X-AgentOps-Workspace', workspace);
+    internal.headers.delete('X-AgentOps-Studio-Session');
+    const source = request.headers.get('Origin');
+    if (user && (!source || source === origin)) internal.headers.set('X-AgentOps-Studio-Session', '1');
     return env.WORKSPACE.getByName('browser:' + workspace).fetch(internal);
   }
 };
@@ -408,7 +411,7 @@ export class Workspace extends DurableObject {
     }
   }
 
-  async action(action, data) {
+  async action(action, data, studioSession = false) {
     const records = this.rows('records');
     const find = (key, kind) => {
       const identifier = requiredText(data, key);
@@ -649,9 +652,11 @@ export class Workspace extends DurableObject {
       if (target.source === 'external') throw new InputError('External agents run in your application');
       if (target.provider === hostedProviderId) {
         if (typeof data.input !== 'string' || !data.input.trim()) throw new InputError('Enter a test message');
+        const billingKey = studioSession && kind === 'agent' && data.billing_key == null
+          ? null : this.billableKey(data.billing_key);
         return this.billing.complete({model:hostedModel, messages:[
           {role:'system', content:target.instructions}, {role:'user', content:data.input}
-        ], max_tokens:target.max_tokens}, this.billableKey(data.billing_key), target, attribution,
+        ], max_tokens:target.max_tokens}, billingKey, target, attribution,
         this.assignedReadTool(records, target, data.input), this.resolveSkill(records, target));
       }
       const prompt = records.find(item => item.id === target.prompt);
@@ -768,7 +773,8 @@ export class Workspace extends DurableObject {
             if (data.billing_key && data.billing_key !== keyId) return json({error:'Use the calling key for billing'}, 403);
             data.billing_key = keyId;
           }
-          return json(await this.action(pathname.slice(14), data), 201);
+          const studioSession = !keyId && request.headers.get('X-AgentOps-Studio-Session') === '1';
+          return json(await this.action(pathname.slice(14), data, studioSession), 201);
         }
       } catch (error) {
         if (error instanceof BillingError) return json({error:error.message}, error.status);

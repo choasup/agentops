@@ -90,8 +90,8 @@ test('published Agent configuration is isolated by workspace and environment and
       usage:{prompt_tokens:20, completion_tokens:4, total_tokens:24}});
   });
 
-  async function request(path, {data, token, session = 'workspace-session'} = {}) {
-    const headers = {'Content-Type':'application/json'};
+  async function request(path, {data, token, session = 'workspace-session', extraHeaders} = {}) {
+    const headers = {'Content-Type':'application/json', ...extraHeaders};
     if (token) headers.Authorization = 'Bearer ' + token;
     else headers.Cookie = '__Host-agentops-session=' + session;
     const response = await worker.fetch(new Request(origin + path, {headers,
@@ -129,6 +129,25 @@ test('published Agent configuration is isolated by workspace and environment and
   assert.ok(externalCli.data.identifier);
   const profile = {name:'Support agent', provider:'hosted:deepseek'};
   const agent = await create('agents', {...profile, instructions:'Version one', max_tokens:80});
+  const studioInput = {target_kind:'agent', target:agent.id, input:'Studio test'};
+  const runOnly = (await request('/api/keys', {data:{name:'Run only', scopes:['agents:run']}})).data;
+  const claimedStudio = {'X-AgentOps-Studio-Session':'1'};
+  assert.equal((await action('runs', studioInput, {token:runOnly.token, extraHeaders:claimedStudio})).status,403);
+  assert.equal((await action('runs', studioInput, {extraHeaders:{...claimedStudio, Origin:'https://other.cloudmoro.com'}})).status,403);
+  const noBalanceAgent = await create('agents', {...profile, instructions:'No credit'}, {session:'other-session'});
+  assert.equal((await action('runs', {...studioInput,target:noBalanceAgent.id}, {session:'other-session'})).status,402);
+  const beforeStudio = (await request('/api/billing')).data.balance_nanos;
+  const studio = await action('runs', studioInput, {extraHeaders:{Origin:origin}});
+  assert.equal(studio.status,201,JSON.stringify(studio.data));
+  assert.equal(studio.data.output,'Version one');
+  assert.equal(studio.data.key_id,null);
+  const afterStudio = (await request('/api/billing')).data;
+  assert.equal(beforeStudio - afterStudio.balance_nanos, studio.data.cost_nanos);
+  const studioEntry = afterStudio.entries.find(row => row.reference === studio.data.id);
+  assert.equal(studioEntry.key_id,null);
+  assert.equal(studioEntry.nanos,-studio.data.cost_nanos);
+  assert.equal(studioEntry.model,'deepseek-flash');
+  assert.ok((await request('/api/keys')).data.every(key => key.requests === 0));
   const first = await create('agent-versions', {agent:agent.id,label:'v1'});
   const firstRelease = await create('agent-releases', {version:first.id,environment:'staging'});
   const duplicate = await create('agent-releases', {version:first.id,environment:'staging'});

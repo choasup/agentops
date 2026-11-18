@@ -107,7 +107,7 @@ node agentdeck.mjs agents list
 
 ### DeepSeek 托管 API
 
-通过 `npx wrangler secret put DEEPSEEK_API_KEY` 为 Worker 配置平台的 DeepSeek 密钥。用户创建带 **Call hosted models** 权限的 Agent Deck Key，可在 Studio 中选择该 Key 结算，或直接调用：
+通过 `npx wrangler secret put DEEPSEEK_API_KEY` 为 Worker 配置平台的 DeepSeek 密钥。用户创建带 **Call hosted models** 权限的 Agent Deck Key 后可直接调用。登录后在 Studio 试跑直接从工作区余额扣费，账单标为 **Studio test**。
 
 ```sh
 curl https://agentdeck.cloudmoro.com/v1/chat/completions \
