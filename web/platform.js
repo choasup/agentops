@@ -719,12 +719,30 @@ function openAgentUsage(agent) {
   select.value = releases.has('production') ? 'production' : releases.has('staging') ? 'staging' : 'draft';
   const detail = element('p');
   const permission = element('p');
+  const url = location.origin + '/api/platform/runs';
+  const endpoint = element('div', undefined, 'agent-api-endpoint');
+  endpoint.append(element('strong', 'POST ' + (location.protocol === 'https:' ? 'HTTPS' : 'HTTP'),
+    'pill'), element('code', url));
   const code = element('pre', undefined, 'agent-api-command');
-  const copy = iconButton('copy', 'Copy cURL', 'button');
+  const copy = iconButton('copy', 'Copy example', 'button');
+  const examples = element('div', undefined, 'agent-api-example-controls');
+  const formats = [['node', 'Node.js'], ['curl', 'cURL'], ['json', 'JSON body']];
+  let format = 'node';
+  const formatButtons = formats.map(([id, label]) => {
+    const button = element('button', label, 'button quiet');
+    button.type = 'button';
+    button.addEventListener('click', () => {format = id; update();});
+    return button;
+  });
+  const tabs = element('div', undefined, 'section-actions');
+  tabs.setAttribute('role', 'group');
+  tabs.setAttribute('aria-label', 'Request example');
+  tabs.append(...formatButtons);
+  examples.append(tabs, copy);
   const keys = iconButton('key', 'Manage API keys', 'button quiet');
   const release = iconButton('deploy', 'Manage releases', 'button quiet');
   const actions = element('div', undefined, 'section-actions');
-  actions.append(copy, keys, release);
+  actions.append(keys, release);
   function update() {
     const environment = select.value;
     const version = releases.get(environment);
@@ -735,13 +753,30 @@ function openAgentUsage(agent) {
     const request = {target_kind:version ? 'agent_release' : 'agent', target:agent.id,
       ...(version ? {environment} : {}), input:'Hello!'};
     const continuation = ' ' + String.fromCharCode(92);
-    code.textContent = [
-      'curl --fail-with-body ' + location.origin + '/api/platform/runs' + continuation,
+    const curl = [
+      'curl --fail-with-body -X POST ' + url + continuation,
       '  -H "Authorization: Bearer $AGENT_DECK_API_KEY"' + continuation,
       "  -H 'Content-Type: application/json'" + continuation,
       "  --data '" + JSON.stringify(request) + "'"
     ].join('\n');
-    copy.querySelector('span').textContent = 'Copy cURL';
+    const node = [
+      'const response = await fetch(' + JSON.stringify(url) + ', {',
+      '  method: "POST",',
+      '  headers: {',
+      '    Authorization: "Bearer " + process.env.AGENT_DECK_API_KEY,',
+      '    "Content-Type": "application/json",',
+      '  },',
+      '  body: JSON.stringify(' + JSON.stringify(request, null, 2).replaceAll('\n', '\n  ') + '),',
+      '});',
+      'const result = await response.json();',
+      'if (!response.ok || result.status === "error") {',
+      '  throw new Error(result.error ?? `Agent request failed: ${response.status}`);',
+      '}',
+      'console.log(result.output, result.id);'
+    ].join('\n');
+    code.textContent = format === 'node' ? node : format === 'curl' ? curl : JSON.stringify(request, null, 2);
+    formatButtons.forEach((button, index) => button.setAttribute('aria-pressed', String(formats[index][0] === format)));
+    copy.querySelector('span').textContent = 'Copy example';
   }
   select.addEventListener('change', update);
   copy.addEventListener('click', async () => {
@@ -766,8 +801,10 @@ function openAgentUsage(agent) {
     openAgentDetail(agent.id, ofKind('agent_version').some(item => item.agent === agent.id) ? 'releases' : 'versions');
   });
   const body = element('div', undefined, 'agent-api');
-  body.append(element('p', agent.name), target, detail, permission, code,
-    element('p', 'Set AGENT_DECK_API_KEY on your server. The response includes output and a trace ID in id.'), actions);
+  body.append(element('p', agent.name), endpoint,
+    element('p', 'Send a JSON request from your server. Each request returns one complete JSON response.'),
+    target, detail, permission, examples, code,
+    element('p', 'Set AGENT_DECK_API_KEY on your server. Read output for the reply and id for its Trace ID.'), actions);
   update();
   openModal('Use Agent', [body]);
 }

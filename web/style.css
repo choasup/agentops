@@ -647,3 +647,10 @@ dialog::backdrop {background: #111a3a70}
 .agent-api > label {display:grid; gap:5px; font-weight:650}
 .agent-api-command {white-space:pre-wrap; overflow-wrap:anywhere; margin:0}
 .studio-toolbar .button + .button {margin-left:0}
+
+.agent-api-endpoint,.agent-api-example-controls {display:flex; align-items:center; flex-wrap:wrap; gap:8px}
+.agent-api-endpoint {padding:8px; border:1px solid var(--border); border-radius:8px}
+.agent-api-endpoint code {min-width:0; overflow-wrap:anywhere}
+.agent-api-example-controls {justify-content:space-between}
+.agent-api-example-controls [aria-pressed="true"] {background:var(--accent-soft); color:var(--accent-dark)}
+.agent-api-command {max-height:36dvh; overflow:auto}
