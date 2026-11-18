@@ -57,7 +57,7 @@ export class WeComGateway {
       const secret = await this.decrypt(config.secret);
       if (!secret) throw new Error('Saved Bot Secret could not be opened');
       const response = await fetch('https://openws.work.weixin.qq.com/', {
-        headers:{Upgrade:'websocket'}, redirect:'manual', signal:AbortSignal.timeout(10_000)
+        headers:{Upgrade:'websocket'}, redirect:'manual'
       });
       const socket = response.webSocket;
       if (!socket) throw new Error('WeCom WebSocket upgrade returned HTTP ' + response.status);
@@ -73,10 +73,11 @@ export class WeComGateway {
           if (this.socket === socket) this.detail = 'A message could not be handled';
         }));
       });
-      socket.addEventListener('close', () => {
+      socket.addEventListener('close', event => {
         if (this.socket === socket) {
           this.socket = undefined;
           this.status = 'reconnecting';
+          this.detail = 'WebSocket closed (' + event.code + ')';
         }
       });
       this.send(socket, 'aibot_subscribe', 'aibot_subscribe_' + crypto.randomUUID(),
