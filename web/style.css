@@ -347,6 +347,19 @@ dialog::backdrop {background: #111a3a70}
 .studio-config-section {border:1px solid var(--border); border-radius:8px; padding:8px 10px}
 .studio-config-section summary {cursor:pointer; font-weight:620}
 .studio-config-section[open] summary {margin-bottom:10px}
+.studio-attachments {display:grid; gap:10px; margin-block:4px}
+.studio-attachments > p,.studio-attachment-section p {color:var(--muted); font-size:12px}
+.studio-attachments > [role="status"]:empty {display:none}
+.studio-attachment-section {display:grid; gap:6px; padding:9px 10px; border:1px solid var(--border); border-radius:8px}
+.studio-attachment-heading,.studio-attachment-row {display:flex; align-items:center; justify-content:space-between; gap:8px}
+.studio-attachment-section .button {min-height:30px; padding:4px 8px; white-space:nowrap; font-size:12px}
+.studio-attachment-row {padding:5px 0}
+.studio-attachment-row > div,.studio-attachment-choice {min-width:0; overflow-wrap:anywhere}
+.studio-attachment-section small {display:block; color:var(--muted)}
+.studio-attachment-picker {display:grid; gap:3px; padding-top:6px; border-top:1px solid var(--border)}
+.studio-attachment-choice {display:block; width:100%; padding:7px 8px; text-align:start; background:var(--canvas); color:var(--ink); border:1px solid transparent; border-radius:6px}
+.studio-attachment-choice:hover:not(:disabled) {border-color:var(--accent)}
+.studio-attachment-choice:disabled {opacity:.65}
 .studio-config-footer {padding:12px 18px; border-top:1px solid var(--border)}
 .studio-config-footer .section-actions {justify-content:flex-end}
 .studio-config-footer [role="status"] {color:#8e2c43; margin-bottom:8px}

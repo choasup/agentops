@@ -764,60 +764,117 @@ function agentFields(data, models) {
   const profile = element('details', undefined, 'studio-config-section');
   identity.append(starter);
   profile.append(element('summary', 'Agent details'), identity);
-  const capabilities = element('details', undefined, 'studio-config-section');
-  const tools = element('div', undefined, 'studio-config-group');
-  capabilities.append(element('summary', 'Tools and Skills'), tools);
-  root.append(model, instructions, capabilities, profile, advanced);
-  const connections = ofKind('mcp_connection').filter(item => !item.revoked || item.id === data.mcp_connection);
-  if (connections.length) {
-    const tool = field('mcp_connection', 'Read-only tool', connections.map(item =>
-      [item.id, item.name + (item.revoked ? ' (disconnected)' : '')]));
-    const toolInput = tool.querySelector('select');
-    toolInput.options[0].textContent = 'No tools';
-    toolInput.required = false;
-    toolInput.value = data.mcp_connection ?? '';
-    const note = element('small');
-    const showTool = () => {
-      tool.hidden = modelInput.value !== hostedProvider;
-      if (tool.hidden) toolInput.value = '';
-      const connection = connections.find(item => item.id === toolInput.value);
-      note.hidden = !connection;
-      if (connection) note.textContent = connection.scope ? 'Each run reads ' + connection.scope + '.' :
-        'Each run searches public Cloudflare docs using the message you send.';
-    };
-    modelInput.addEventListener('change', showTool);
-    toolInput.addEventListener('change', showTool);
-    showTool();
-    tools.append(tool, note);
-  }
+  root.append(model, instructions, studioAttachments(data, modelInput), profile, advanced);
+  return root;
+}
+
+function studioAttachments(data, modelInput) {
+  const connections = ofKind('mcp_connection');
   const skills = ofKind('skill');
-  if (skills.length) {
-    const skill = field('skill', 'Installed Skill', skills.map(item => [item.id, item.name]));
-    const skillInput = skill.querySelector('select');
-    skillInput.options[0].textContent = 'No Skill';
-    skillInput.required = false;
-    skillInput.value = data.skill ?? '';
-    const toolInput = root.querySelector('[name=mcp_connection]');
-    const showSkills = () => {
-      const connection = connections.find(item => item.id === toolInput?.value && !item.revoked);
-      const hosted = modelInput.value === hostedProvider;
-      skill.hidden = !hosted;
-      for (const option of Array.from(skillInput.options).slice(1)) {
-        const requires = skills.find(item => item.id === option.value)?.requires;
-        option.disabled = Boolean(requires && requires !== (connection && (connection.provider ?? 'cloudflare-docs')));
-      }
-      if (!hosted || skillInput.selectedOptions[0]?.disabled) skillInput.value = '';
+  const root = element('div', undefined, 'studio-attachments');
+  const notice = element('p');
+  notice.setAttribute('role', 'status');
+  const compatibility = element('p');
+  let connectionId = data.mcp_connection ?? '';
+  let skillId = data.skill ?? '';
+  let picker;
+  const hosted = () => modelInput.value === hostedProvider;
+  const compatible = skill => !skill.requires || connections.some(connection =>
+    connection.id === connectionId && !connection.revoked &&
+    (connection.provider ?? 'cloudflare-docs') === skill.requires);
+
+  const makeSection = (title, name, items, getId, choose, emptyText) => {
+    const section = element('section', undefined, 'studio-attachment-section');
+    const heading = element('div', undefined, 'studio-attachment-heading');
+    const input = element('input');
+    input.type = 'hidden';
+    input.name = name;
+    const tool = name === 'mcp_connection';
+    const add = iconButton('plus', 'Add ' + (tool ? 'tool' : 'Skill'), 'button');
+    add.type = 'button';
+    const list = element('div', undefined, 'studio-attachment-picker');
+    list.id = 'studio-picker-' + name;
+    add.setAttribute('aria-controls', list.id);
+    const current = element('div');
+    heading.append(element('h3', title), add);
+    section.append(heading, current, list, input);
+    add.addEventListener('click', () => {
+      picker = picker === name ? undefined : name;
+      render();
+    });
+    const select = (id, remove = false) => {
+      picker = undefined;
+      notice.textContent = '';
+      choose(id);
+      render();
+      (remove ? add : current.querySelector('button') ?? add).focus();
     };
-    modelInput.addEventListener('change', showSkills);
-    toolInput?.addEventListener('change', showSkills);
-    showSkills();
-    tools.append(skill);
-  }
-  const showCapabilities = () => {
-    capabilities.hidden = modelInput.value !== hostedProvider || (!connections.length && !skills.length);
+    const detail = item => {
+      if (tool) return item.revoked ? 'Disconnected' : item.scope ?? 'Read-only';
+      if (!item.requires) return '';
+      const provider = connectionCatalogue.find(entry => entry.id === item.requires);
+      return 'Requires ' + (provider?.name ?? item.requires);
+    };
+    return {section, update() {
+      const id = getId();
+      input.value = hosted() ? id : '';
+      add.disabled = !hosted();
+      add.setAttribute('aria-expanded', String(picker === name));
+      list.hidden = picker !== name;
+      current.replaceChildren();
+      const installed = items.find(item => item.id === id);
+      if (installed) {
+        const row = element('div', undefined, 'studio-attachment-row');
+        const identity = element('div');
+        identity.append(element('strong', installed.name));
+        if (detail(installed)) identity.append(element('small', detail(installed)));
+        const remove = iconButton('close', 'Remove', 'button quiet');
+        remove.type = 'button';
+        remove.setAttribute('aria-label', 'Remove ' + installed.name);
+        remove.addEventListener('click', () => select('', true));
+        row.append(identity, remove);
+        current.append(row);
+      } else current.append(element('p', tool ? 'No tool attached' : 'No Skill installed'));
+      list.replaceChildren();
+      if (list.hidden) return;
+      const choices = items.filter(item => item.id !== id && !item.revoked);
+      if (!choices.length) list.append(element('p', emptyText));
+      for (const item of choices) {
+        const row = element('button', undefined, 'studio-attachment-choice');
+        row.type = 'button';
+        row.disabled = !tool && !compatible(item);
+        row.append(element('strong', item.name));
+        if (detail(item)) row.append(element('small', detail(item)));
+        row.addEventListener('click', () => select(item.id));
+        list.append(row);
+      }
+    }};
   };
-  modelInput.addEventListener('change', showCapabilities);
-  showCapabilities();
+  const tools = makeSection('Tools', 'mcp_connection', connections, () => connectionId, id => {
+    connectionId = id;
+    const skill = skills.find(item => item.id === skillId);
+    if (skill && !compatible(skill)) {
+      skillId = '';
+      notice.textContent = skill.name + ' was removed because it requires the previous tool.';
+    }
+  }, 'No other connected tools. Add a connection from Home → Connections.');
+  const installedSkills = makeSection('Skills', 'skill', skills, () => skillId, id => {
+    skillId = id;
+  }, 'No other Skills available. Import a ZIP from Home → Skills.');
+  function render() {
+    compatibility.hidden = hosted();
+    compatibility.textContent = connectionId || skillId
+      ? 'Saving with this model will remove attached tools and Skills. They require Hosted DeepSeek.'
+      : 'Tools and Skills require Hosted DeepSeek.';
+    tools.update();
+    installedSkills.update();
+  }
+  modelInput.addEventListener('change', () => {
+    picker = undefined;
+    render();
+  });
+  root.append(compatibility, tools.section, installedSkills.section, notice);
+  render();
   return root;
 }
 
